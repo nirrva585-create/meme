@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fast Safe Solana Meme Scanner – Holders + Rug/Bot Detection</title>
+  <title>Safe Solana Meme Coin Scanner – Holders & Rug Detection</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -146,6 +146,14 @@ function formatHolders(n) {
 }
 
 // ────────────────────────────────────────────────
+function formatChange(pct) {
+  if (!pct && pct !== 0) return "—";
+  const sign = pct > 0 ? "+" : "";
+  const cls = pct > 10 ? "change-up" : pct < -10 ? "change-down" : "change-neutral";
+  return `<span class="${cls}">${sign}${pct.toFixed(2)}%</span>`;
+}
+
+// ────────────────────────────────────────────────
 // Holder count + Rug risk
 // ────────────────────────────────────────────────
 async function getHoldersAndRisk(mint, pair) {
@@ -160,7 +168,9 @@ async function getHoldersAndRisk(mint, pair) {
       const data = await res.json();
       holders = data.data?.holder || 0;
     }
-  } catch {}
+  } catch (err) {
+    console.error("Birdeye holders fetch failed:", err);
+  }
 
   let risk = "safe";
   let reason = "";
@@ -219,7 +229,7 @@ async function fetchAndShow() {
     }
 
     lastGoodData = pairs;
-    addLog("Refreshed successfully", "success");
+    addLog("Refreshed successfully");
   } catch (err) {
     addLog(`Load failed: ${err.message} – showing cached data`, "retry");
 
@@ -244,7 +254,7 @@ async function fetchAndShow() {
 // Start
 fetchAndShow();
 setInterval(fetchAndShow, 10000); // 10 seconds
-addLog("Started – fast refresh with holder count & rug detection", "success");
+addLog("Started – fast refresh with holder count & rug detection");
 </script>
 
 </body>
