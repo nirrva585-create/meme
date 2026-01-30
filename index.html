@@ -3,30 +3,23 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Solana Meme Whale + Jupiter + TP/SL</title>
+  <title>Solana Meme Whale + Jupiter DEX + TP/SL (Final)</title>
   <style>
     body { font-family: system-ui, sans-serif; background: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
     h1, h3 { color: #58a6ff; }
     #wallet { text-align: center; margin: 10px 0; font-weight: bold; }
     button { background: #238636; color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; margin: 4px; }
     button:disabled { background: #444; cursor: not-allowed; }
-    input { padding: 6px 10px; margin: 4px; width: 80px; background: #1e252e; color: white; border: 1px solid #444; border-radius: 4px; }
     table { width: 100%; border-collapse: collapse; margin: 20px 0; background: #161b22; border-radius: 8px; overflow: hidden; }
     th, td { padding: 12px; text-align: left; border-bottom: 1px solid #30363d; }
     th { background: #21262d; }
     .whale { background: #1f2a1a !important; }
-    .high-risk { background: rgba(248, 81, 73, 0.18) !important; }
-    .watch-risk { background: rgba(242, 201, 76, 0.12) !important; }
     .pnl-positive { color: #56d364; }
     .pnl-negative { color: #f85149; }
-    .zone-buy  { color: #56d364; font-weight: bold; background: rgba(86, 211, 100, 0.1); }
-    .zone-sell { color: #f2c94c; font-weight: bold; background: rgba(242, 201, 76, 0.1); }
-    #log { background: #0d1117; border: 1px solid #30363d; padding: 15px; height: 240px; overflow-y: auto; font-family: monospace; margin-top: 20px; border-radius: 6px; }
-    .alert-buy   { color: #56d364; font-weight: bold; }
-    .alert-sell  { color: #f2c94c; font-weight: bold; }
-    .alert-whale { color: #f2c94c; font-weight: bold; }
-    .alert-scam  { color: #ff6b6b; font-weight: bold; background: rgba(255,107,107,0.12); }
-    .alert-retry { color: #f2994a; }
+    #log { background: #0d1117; border: 1px solid #30363d; padding: 15px; height: 220px; overflow-y: auto; font-family: monospace; margin-top: 20px; border-radius: 6px; }
+    .alert-success { color: #56d364; font-weight: bold; }
+    .alert-danger  { color: #f85149; font-weight: bold; }
+    .alert-info    { color: #8b949e; }
   </style>
 </head>
 <body>
@@ -44,34 +37,29 @@
       <th>Token</th>
       <th>Symbol</th>
       <th>Price</th>
-      <th>5m Δ</th>
-      <th>24h Δ</th>
       <th>Market Cap</th>
       <th>Liquidity</th>
       <th>Vol 24h</th>
-      <th>Holders</th>
-      <th>LP Safety</th>
-      <th>Risk Alert</th>
-      <th>Zone Alert</th>
-      <th>Whale (5m)</th>
-      <th>Action</th>
+      <th>5m Δ</th>
+      <th>Whale Activity</th>
+      <th>Buy</th>
     </tr>
   </thead>
   <tbody id="coins-table"></tbody>
 </table>
 
-<h3>Open Positions (with TP/SL)</h3>
+<h3>Open Positions (TP/SL)</h3>
 <table>
   <thead>
     <tr>
       <th>Token</th>
       <th>Amount</th>
-      <th>Entry Price</th>
-      <th>Current Price</th>
+      <th>Entry</th>
+      <th>Current</th>
       <th>PnL %</th>
-      <th>TP Level</th>
-      <th>SL Level</th>
-      <th>Action</th>
+      <th>TP</th>
+      <th>SL</th>
+      <th>Sell</th>
     </tr>
   </thead>
   <tbody id="positions-table"></tbody>
@@ -80,7 +68,6 @@
 <div id="log"><strong>Log & Alerts</strong><br></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@1.95.3/lib/index.iife.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@solana/spl-token@0.4.8/lib/index.iife.min.js"></script>
 
 <script>
 // ────────────────────────────────────────────────
@@ -90,10 +77,8 @@ const connection = new Connection("https://api.mainnet-beta.solana.com", "confir
 let wallet = null;
 let positions = JSON.parse(localStorage.getItem("meme_positions") || "[]");
 
-const PUMP_API = "https://frontend-api.pump.fun/coins?offset=0&limit=12&sort=created_timestamp&order=desc";
+const PUMP_API = "https://frontend-api.pump.fun/coins?offset=0&limit=10&sort=created_timestamp&order=desc";
 const DEXSCREENER = "https://api.dexscreener.com/latest/dex/search?q=";
-const BIRDEYE_TOKEN = "https://public-api.birdeye.so/defi/token_overview?address=";
-const BIRDEYE_TRADE = "https://public-api.birdeye.so/defi/txs/token";
 const JUPITER_QUOTE = "https://quote-api.jup.ag/v6/quote";
 const JUPITER_SWAP  = "https://quote-api.jup.ag/v6/swap";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
@@ -102,15 +87,10 @@ const LAMPORTS_PER_SOL = 1_000_000_000;
 const SLIPPAGE_BPS = 500;
 const DEFAULT_TP_PCT = 80;
 const DEFAULT_SL_PCT = -25;
-const REFRESH_MS = 18000;
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 2000;
+const REFRESH_MS = 25000; // 25 seconds — very safe
 
-const whaleSound = new Audio("https://www.soundjay.com/buttons/beep-07.mp3");
-const buySound   = new Audio("https://www.soundjay.com/buttons/beep-08b.mp3");
-const sellSound  = new Audio("https://www.soundjay.com/buttons/beep-10.mp3");
-const scamSound  = new Audio("https://www.soundjay.com/buttons/beep-09.mp3");
-const zoneSound  = new Audio("https://www.soundjay.com/buttons/beep-01a.mp3");
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 3000;
 
 // ────────────────────────────────────────────────
 // Log
@@ -122,15 +102,10 @@ function addLog(msg, type = "info") {
   div.className = `alert-${type}`;
   logDiv.appendChild(div);
   logDiv.scrollTop = logDiv.scrollHeight;
-
-  if (type.includes("buy") || type.includes("zone-buy")) zoneSound.play().catch(() => {});
-  if (type.includes("sell") || type.includes("zone-sell")) sellSound.play().catch(() => {});
-  if (type === "whale") whaleSound.play().catch(() => {});
-  if (type === "scam") scamSound.play().catch(() => {});
 }
 
 // ────────────────────────────────────────────────
-// Wallet Connection
+// Wallet
 // ────────────────────────────────────────────────
 document.getElementById("connect-wallet").onclick = async () => {
   if ("solana" in window) {
@@ -138,18 +113,18 @@ document.getElementById("connect-wallet").onclick = async () => {
     try {
       await wallet.connect();
       document.getElementById("wallet").textContent = `Wallet: ${wallet.publicKey.toString().slice(0,8)}...`;
-      addLog("Phantom connected");
+      addLog("Phantom connected", "success");
       renderPositions();
     } catch (err) {
-      addLog("Connection failed: " + err.message);
+      addLog("Connection failed: " + err.message, "danger");
     }
   } else {
-    addLog("Phantom not detected. Install it.");
+    addLog("Phantom not detected. Install it.", "danger");
   }
 };
 
 // ────────────────────────────────────────────────
-// Retry Wrapper
+// Retry wrapper
 // ────────────────────────────────────────────────
 async function withRetry(fn, name = "fetch") {
   let attempt = 0;
@@ -158,69 +133,13 @@ async function withRetry(fn, name = "fetch") {
       return await fn();
     } catch (err) {
       attempt++;
-      const delay = RETRY_DELAY_MS * Math.pow(2, attempt - 1);
       if (attempt === MAX_RETRIES) {
-        addLog(`${name} failed after ${MAX_RETRIES} tries: ${err.message}`, "alert-retry");
+        addLog(`${name} failed after ${MAX_RETRIES} tries`, "danger");
         return null;
       }
-      await new Promise(r => setTimeout(r, delay));
+      await new Promise(r => setTimeout(r, RETRY_DELAY_MS * attempt));
     }
   }
-}
-
-// ────────────────────────────────────────────────
-// Data Fetchers
-// ────────────────────────────────────────────────
-async function getDexScreenerData(mint) {
-  return withRetry(async () => {
-    const res = await fetch(DEXSCREENER + encodeURIComponent(`${mint} SOL`));
-    if (!res.ok) throw new Error(`DexScreener ${res.status}`);
-    const data = await res.json();
-    if (data.pairs?.length > 0) {
-      const p = data.pairs[0];
-      return {
-        url: p.url || `https://dexscreener.com/solana/${mint}`,
-        liquidity: p.liquidity?.usd || 0,
-        volume24h: p.volume?.h24 || 0,
-        priceChange24h: p.priceChange?.h24 || 0,
-        priceChange5mApprox: p.priceChange?.m5 || 0,
-        lpLockedPct: p.liquidity?.lockedPct || 0
-      };
-    }
-    return { url: `https://dexscreener.com/solana/${mint}`, liquidity: 0, volume24h: 0, priceChange24h: 0, priceChange5mApprox: 0, lpLockedPct: 0 };
-  }, `DexScreener ${mint.slice(0,6)}`);
-}
-
-async function getRecentTradeStats(mint) {
-  return withRetry(async () => {
-    const now = Math.floor(Date.now() / 1000);
-    const from = now - 300;
-    const url = `${BIRDEYE_TRADE}?address=${mint}&tx_type=swap&sort_type=desc&from_time=${from}&to_time=${now}&limit=50&ui_amount_mode=raw`;
-    const res = await fetch(url, { headers: { 'x-chain': 'solana' } });
-    if (!res.ok) throw new Error(`Birdeye trades ${res.status}`);
-    const data = await res.json();
-    const trades = data.data?.items || [];
-
-    let buyVol = 0, sellVol = 0, buyCount = 0, sellCount = 0, smallBuyCount = 0;
-    for (const t of trades) {
-      const usd = t.valueUsdc || t.valueUsd || 0;
-      if (t.tokenIn?.address === SOL_MINT && t.tokenOut?.address === mint) {
-        buyVol += usd; buyCount++; if (usd < 10) smallBuyCount++;
-      } else if (t.tokenOut?.address === SOL_MINT && t.tokenIn?.address === mint) {
-        sellVol += usd; sellCount++;
-      }
-    }
-    return { buyVol, sellVol, buyCount, sellCount, smallBuyCount };
-  }, `Birdeye trades ${mint.slice(0,6)}`);
-}
-
-async function getHoldersCount(mint) {
-  return withRetry(async () => {
-    const res = await fetch(`${BIRDEYE_TOKEN}${mint}`, { headers: { 'x-chain': 'solana' } });
-    if (!res.ok) throw new Error(`Birdeye holders ${res.status}`);
-    const data = await res.json();
-    return data.data?.holder || 0;
-  }, `Birdeye holders ${mint.slice(0,6)}`);
 }
 
 // ────────────────────────────────────────────────
@@ -258,10 +177,10 @@ async function executeTx(tx) {
 }
 
 // ────────────────────────────────────────────────
-// Buy / Sell with TP/SL
+// Buy / Sell
 // ────────────────────────────────────────────────
 async function buyToken(mint, solAmount = 0.05) {
-  if (!wallet?.publicKey) return addLog("Wallet not connected");
+  if (!wallet?.publicKey) return addLog("Wallet not connected", "danger");
 
   try {
     addLog(`Buying ~${solAmount} SOL of ${mint.slice(0,6)}...`);
@@ -271,16 +190,15 @@ async function buyToken(mint, solAmount = 0.05) {
     const tx = await getJupiterSwapTx(quote, wallet.publicKey.toString());
     const sig = await executeTx(tx);
 
-    addLog(`Buy success! Sig: ${sig.slice(0,8)}...`);
+    addLog(`Buy success! Sig: ${sig.slice(0,8)}...`, "success");
 
-    const solPrice = 150; // fallback
-    const entryPrice = (solAmount * solPrice) / (Number(quote.outAmount) / 1e6);
+    const entryPrice = 150 / (Number(quote.outAmount) / 1e6); // rough USD
     const tpPrice = entryPrice * (1 + DEFAULT_TP_PCT / 100);
     const slPrice = entryPrice * (1 + DEFAULT_SL_PCT / 100);
 
     positions.push({
       mint,
-      name: coin?.name || "Token",
+      name: "Token",
       amount: Number(quote.outAmount) / 1e6,
       entryPriceUsd: entryPrice,
       tpPriceUsd: tpPrice,
@@ -291,12 +209,12 @@ async function buyToken(mint, solAmount = 0.05) {
     localStorage.setItem("meme_positions", JSON.stringify(positions));
     renderPositions();
   } catch (err) {
-    addLog("Buy failed: " + err.message);
+    addLog("Buy failed: " + err.message, "danger");
   }
 }
 
 async function sellToken(position) {
-  if (!wallet?.publicKey) return addLog("Wallet not connected");
+  if (!wallet?.publicKey) return addLog("Wallet not connected", "danger");
 
   try {
     addLog(`Selling ${position.mint.slice(0,6)}...`);
@@ -306,13 +224,13 @@ async function sellToken(position) {
     const tx = await getJupiterSwapTx(quote, wallet.publicKey.toString());
     const sig = await executeTx(tx);
 
-    addLog(`Sell success! Sig: ${sig.slice(0,8)}...`);
+    addLog(`Sell success! Sig: ${sig.slice(0,8)}...`, "success");
 
     positions = positions.filter(p => p.mint !== position.mint);
     localStorage.setItem("meme_positions", JSON.stringify(positions));
     renderPositions();
   } catch (err) {
-    addLog("Sell failed: " + err.message);
+    addLog("Sell failed: " + err.message, "danger");
   }
 }
 
@@ -326,13 +244,13 @@ async function checkTpSl() {
     try {
       const res = await fetch(DEXSCREENER + encodeURIComponent(`${pos.mint} SOL`));
       const data = await res.json();
-      const currentPrice = data.pairs?.[0]?.priceUsd || 0;
+      const price = data.pairs?.[0]?.priceUsd || 0;
 
-      if (currentPrice >= pos.tpPriceUsd) {
-        addLog(`TAKE PROFIT HIT → ${pos.mint.slice(0,6)} @ $${currentPrice.toFixed(6)}`);
+      if (price >= pos.tpPriceUsd) {
+        addLog(`TAKE PROFIT HIT → ${pos.mint.slice(0,6)} @ $${price.toFixed(6)}`, "success");
         await sellToken(pos);
-      } else if (currentPrice <= pos.slPriceUsd) {
-        addLog(`STOP LOSS HIT → ${pos.mint.slice(0,6)} @ $${currentPrice.toFixed(6)}`);
+      } else if (price <= pos.slPriceUsd) {
+        addLog(`STOP LOSS HIT → ${pos.mint.slice(0,6)} @ $${price.toFixed(6)}`, "danger");
         await sellToken(pos);
       }
     } catch {}
@@ -352,10 +270,10 @@ function renderPositions() {
       <td>${pos.mint.slice(0,6)}...</td>
       <td>${pos.amount.toFixed(2)}</td>
       <td>$${pos.entryPriceUsd.toFixed(6)}</td>
-      <td id="cur-${pos.mint}">Loading...</td>
+      <td id="cur-${pos.mint}">...</td>
       <td id="pnl-${pos.mint}">0%</td>
-      <td>TP: $${pos.tpPriceUsd.toFixed(6)} (+${DEFAULT_TP_PCT}%)</td>
-      <td>SL: $${pos.slPriceUsd.toFixed(6)} (${DEFAULT_SL_PCT}%)</td>
+      <td>TP: $${pos.tpPriceUsd.toFixed(4)} (+${DEFAULT_TP_PCT}%)</td>
+      <td>SL: $${pos.slPriceUsd.toFixed(4)} (${DEFAULT_SL_PCT}%)</td>
       <td><button onclick="sellToken(${JSON.stringify(pos)})">Sell</button></td>
     `;
     tbody.appendChild(tr);
@@ -373,11 +291,12 @@ function renderPositions() {
 }
 
 // ────────────────────────────────────────────────
-// Main fetch (simplified whale/risk logic)
+// Main fetch
 // ────────────────────────────────────────────────
 async function fetchAndShow() {
   try {
     const res = await fetch(PUMP_API);
+    if (!res.ok) throw new Error("Pump API error");
     const coins = await res.json();
 
     const tbody = document.getElementById("coins-table");
@@ -400,9 +319,9 @@ async function fetchAndShow() {
 
     await checkTpSl();
     renderPositions();
-    addLog("Table & positions updated");
+    addLog("Table & positions updated", "success");
   } catch (err) {
-    addLog("Data load failed: " + err.message);
+    addLog("Data load failed: " + err.message + " — retrying...", "danger");
   }
 }
 
@@ -413,7 +332,7 @@ document.getElementById("refresh").onclick = fetchAndShow;
 setInterval(fetchAndShow, REFRESH_MS);
 fetchAndShow();
 renderPositions();
-addLog("Started — Jupiter DEX + TP/SL active");
+addLog("Started — all free APIs, no keys needed", "success");
 </script>
 
 </body>
