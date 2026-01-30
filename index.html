@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Solana Meme Whale Viewer + RugCheck + Retry Logic</title>
+  <title>Solana Meme Whale Viewer + Auto Scam/Rug/Safe Zones (No Keys)</title>
   <style>
     body {
       font-family: system-ui, sans-serif;
@@ -47,6 +47,9 @@
     .change-down  { color: #f85149; font-weight: bold; }
     .change-neutral { color: #8b949e; }
 
+    .zone-buy  { color: #56d364; font-weight: bold; background: rgba(86, 211, 100, 0.1); }
+    .zone-sell { color: #f2c94c; font-weight: bold; background: rgba(242, 201, 76, 0.1); }
+
     .risk-safe   { color: #56d364; font-weight: bold; }
     .risk-watch  { color: #f2c94c; font-weight: bold; }
     .risk-danger { color: #f85149; font-weight: bold; }
@@ -78,11 +81,11 @@
 </head>
 <body>
 
-<h1>Solana Meme Coins — Whale + RugCheck + Safe Zones</h1>
+<h1>Solana Meme Coins — Whale + Auto Scam/Rug/Safe Zones</h1>
 
 <div id="controls">
   <button onclick="fetchAndShow()">Refresh Now</button>
-  <p>Auto-refreshes every 12s • Whale ≥ $500 • With retry logic for stability</p>
+  <p>Auto-refreshes every 15–20s • All free public APIs • No keys needed</p>
 </div>
 
 <table>
@@ -98,8 +101,8 @@
       <th>Vol 24h</th>
       <th>Holders</th>
       <th>Sentiment (5m)</th>
-      <th>LP Locked</th>
-      <th>RugCheck Risk</th>
+      <th>LP Safety</th>
+      <th>Risk Alert</th>
       <th>Zone Alert</th>
       <th>Age</th>
       <th>Whale (5m)</th>
@@ -110,7 +113,7 @@
 </table>
 
 <div id="log">
-  <strong>Alerts, Zones & Retry Log</strong><br>
+  <strong>Alerts, Safe Zones & Warnings</strong><br>
 </div>
 
 <!-- Sounds -->
@@ -122,15 +125,12 @@
 
 <script>
 // ────────────────────────────────────────────────
-// CONFIG
+// CONFIG – no keys needed
 // ────────────────────────────────────────────────
-const RUGCHECK_API_KEY = ""; // ← PASTE YOUR RUGCHECK API KEY HERE
-
-const PUMP_API       = "https://frontend-api.pump.fun/coins?offset=0&limit=20&sort=created_timestamp&order=desc";
+const PUMP_API       = "https://frontend-api.pump.fun/coins?offset=0&limit=15&sort=created_timestamp&order=desc";
 const BIRDEYE_TRADE  = "https://public-api.birdeye.so/defi/txs/token";
 const BIRDEYE_TOKEN  = "https://public-api.birdeye.so/defi/token_overview?address=";
 const DEXSCREENER    = "https://api.dexscreener.com/latest/dex/search?q=";
-const RUGCHECK_BASE  = "https://api.rugcheck.xyz/v1/tokens/";
 const SOL_MINT       = "So11111111111111111111111111111111111111112";
 
 const WHALE_USD      = 500;
@@ -140,10 +140,10 @@ const SAFE_BUY_DIP   = -15;
 const SAFE_SELL_PUMP = 50;
 const LOW_LIQ_THR    = 10000;
 const LOW_HOLDERS_THR = 150;
-const REFRESH_MS     = 15000; // slightly longer to reduce rate-limit pressure
+const REFRESH_MS     = 18000; // 18s – safer for rate limits
 
 const MAX_RETRIES    = 3;
-const RETRY_DELAY_MS = 2000; // base delay, increases exponentially
+const RETRY_DELAY_MS = 2000;
 
 const whaleSound = document.getElementById("whale-sound");
 const buySound   = document.getElementById("buy-sound");
@@ -173,17 +173,17 @@ function addLog(msg, type = "info") {
 // ────────────────────────────────────────────────
 // Retry wrapper
 // ────────────────────────────────────────────────
-async function withRetry(fn, name = "fetch", maxRetries = MAX_RETRIES) {
+async function withRetry(fn, name = "fetch") {
   let attempt = 0;
-  while (attempt < maxRetries) {
+  while (attempt < MAX_RETRIES) {
     try {
       return await fn();
     } catch (err) {
       attempt++;
       const delay = RETRY_DELAY_MS * Math.pow(2, attempt - 1);
-      if (attempt === maxRetries) {
-        addLog(`${name} failed after ${maxRetries} retries: ${err.message}`, "alert-retry");
-        throw err; // let caller handle final failure
+      if (attempt === MAX_RETRIES) {
+        addLog(`${name} failed after ${MAX_RETRIES} tries: ${err.message}`, "alert-retry");
+        return null; // silent fail – return null instead of crashing
       }
       await new Promise(r => setTimeout(r, delay));
     }
@@ -191,7 +191,7 @@ async function withRetry(fn, name = "fetch", maxRetries = MAX_RETRIES) {
 }
 
 // ────────────────────────────────────────────────
-// Fetch functions with retry
+// Data fetchers (all free & public)
 // ────────────────────────────────────────────────
 async function getDexScreenerData(mint) {
   return withRetry(async () => {
@@ -205,18 +205,19 @@ async function getDexScreenerData(mint) {
         liquidity: p.liquidity?.usd || 0,
         volume24h: p.volume?.h24 || 0,
         priceChange24h: p.priceChange?.h24 || 0,
-        priceChange5mApprox: p.priceChange?.m5 || 0
+        priceChange5mApprox: p.priceChange?.m5 || 0,
+        lpLockedPct: p.liquidity?.lockedPct || 0 // some pairs expose this
       };
     }
-    return { url: `https://dexscreener.com/solana/${mint}`, liquidity: 0, volume24h: 0, priceChange24h: 0, priceChange5mApprox: 0 };
-  }, `DexScreener for ${mint.slice(0,6)}`);
+    return { url: `https://dexscreener.com/solana/${mint}`, liquidity: 0, volume24h: 0, priceChange24h: 0, priceChange5mApprox: 0, lpLockedPct: 0 };
+  }, `DexScreener ${mint.slice(0,6)}`);
 }
 
 async function getRecentTradeStats(mint) {
   return withRetry(async () => {
     const now = Math.floor(Date.now() / 1000);
     const from = now - 300;
-    const url = `${BIRDEYE_TRADE}?address=${mint}&tx_type=swap&sort_type=desc&from_time=${from}&to_time=${now}&limit=60&ui_amount_mode=raw`;
+    const url = `${BIRDEYE_TRADE}?address=${mint}&tx_type=swap&sort_type=desc&from_time=${from}&to_time=${now}&limit=50&ui_amount_mode=raw`;
     const res = await fetch(url, { headers: { 'x-chain': 'solana' } });
     if (!res.ok) throw new Error(`Birdeye trades ${res.status}`);
     const data = await res.json();
@@ -244,32 +245,87 @@ async function getHoldersCount(mint) {
   }, `Birdeye holders ${mint.slice(0,6)}`);
 }
 
-async function getRugCheckData(mint) {
-  if (!RUGCHECK_API_KEY) return { score: null, risk: "no_key", lpLocked: null, lpLockedPct: 0, message: "No key" };
+// ────────────────────────────────────────────────
+// Risk & Zone Logic (no RugCheck key needed)
+// ────────────────────────────────────────────────
+function calculateRiskLevel(liquidity, holders, priceChange5m, volume24h, smallBuyCount, lpLockedPct) {
+  let score = 0;
 
-  return withRetry(async () => {
-    const url = `${RUGCHECK_BASE}${mint}/report/summary`;
-    const res = await fetch(url, {
-      headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${RUGCHECK_API_KEY}` }
-    });
-    if (!res.ok) throw new Error(`RugCheck ${res.status}`);
-    const data = await res.json();
+  if (liquidity < LOW_LIQ_THR) score += 4;
+  if (holders < LOW_HOLDERS_THR) score += 3;
+  if (priceChange5m > FAKE_PUMP_THR && volume24h < 50000) score += 3;
+  if (smallBuyCount > 12) score += 2;
+  if (lpLockedPct < 50 && lpLockedPct > 0) score += 3; // partial lock penalty
 
-    return {
-      score: data.rug_score ?? data.risk_score ?? null,
-      risk: data.risk_level?.toLowerCase() ?? "unknown",
-      lpLocked: data.lp_locked ?? data.lp_burned ?? false,
-      lpLockedPct: data.lp_locked_percentage ?? data.lp_lock_pct ?? 0,
-      message: data.warning_count > 0 ? `${data.warning_count} warnings` : "clean"
-    };
-  }, `RugCheck ${mint.slice(0,6)}`);
+  if (score >= 8) return { level: "high", text: `🔴 High Risk (low liq/LP/holders)`, class: "risk-danger" };
+  if (score >= 4) return { level: "watch", text: `🟡 Watch (early / partial LP)`, class: "risk-watch" };
+  return { level: "safe", text: `🟢 Safe`, class: "risk-safe" };
+}
+
+function formatLpLock(pct) {
+  if (pct <= 0 || !pct) return "— (no data)";
+  if (pct >= 90) return `<span class="lp-locked">Locked (${pct.toFixed(0)}%)</span>`;
+  if (pct >= 50) return `<span class="lp-partial">Partial (${pct.toFixed(0)}%)</span>`;
+  return `<span class="lp-unlocked">Low/Unlocked (${pct.toFixed(0)}%)</span>`;
+}
+
+function detectSafeZones(priceChange5m, priceChange24h, liquidity, buyVol, sellVol, lpLockedPct) {
+  let zone = "-";
+  let alertType = null;
+  let msg = "";
+
+  // Safe Buy Zone
+  if ((priceChange5m < SAFE_BUY_DIP || priceChange24h < SAFE_BUY_DIP * 1.5) &&
+      liquidity > LOW_LIQ_THR * 1.5 &&
+      buyVol > sellVol * 1.2 &&
+      lpLockedPct >= 50) {
+    zone = "🟢 Safe Buy Zone";
+    alertType = "zone-buy";
+    msg = `SAFE BUY ZONE → ${coin.name} dipped but liq & LP support rebound`;
+  }
+
+  // Safe Sell Zone
+  if (priceChange5m > SAFE_SELL_PUMP || priceChange24h > SAFE_SELL_PUMP * 2) {
+    zone = "🟡 Safe Sell Zone";
+    alertType = "zone-sell";
+    msg = `TAKE PROFIT ZONE → ${coin.name} pumped hard — consider exit`;
+  }
+
+  if (msg) addLog(msg, alertType);
+
+  return { zone, alertType };
 }
 
 // ────────────────────────────────────────────────
-// (keep formatChange, formatBig, formatHolders, formatLpLock, getSentimentClass, calculateRiskLevel, detectSafeZones as before)
+// Formatters (unchanged)
+// ────────────────────────────────────────────────
+function formatChange(pct) {
+  if (!pct && pct !== 0) return "—";
+  const sign = pct > 0 ? "+" : "";
+  const cls = pct > 10 ? "change-up" : pct < -10 ? "change-down" : "change-neutral";
+  return `<span class="${cls}">${sign}${pct.toFixed(2)}% ${pct > 0 ? '↑' : pct < 0 ? '↓' : ''}</span>`;
+}
+
+function formatBig(n) {
+  if (!n || n <= 0) return "—";
+  if (n >= 1e6) return `$${(n/1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `$${(n/1e3).toFixed(1)}K`;
+  return `$${n.toFixed(0)}`;
+}
+
+function formatHolders(n) {
+  if (!n || n <= 0) return "—";
+  return n.toLocaleString();
+}
+
+function getSentimentClass(buyVol, sellVol) {
+  if (buyVol > sellVol * 1.5) return "sentiment-buy";
+  if (sellVol > buyVol * 1.5) return "sentiment-sell";
+  return "sentiment-neut";
+}
 
 // ────────────────────────────────────────────────
-// Main loop with better error handling
+// Main loop
 // ────────────────────────────────────────────────
 async function fetchAndShow() {
   let failedCount = 0;
@@ -285,32 +341,84 @@ async function fetchAndShow() {
 
     for (const coin of coins) {
       try {
-        const [dexData, tradeStats, holders, rugCheck] = await Promise.all([
+        const [dexData, tradeStats, holders] = await Promise.all([
           getDexScreenerData(coin.mint),
           getRecentTradeStats(coin.mint),
-          getHoldersCount(coin.mint),
-          getRugCheckData(coin.mint)
+          getHoldersCount(coin.mint)
         ]);
 
-        // ... rest of per-coin logic (whale detection, alerts, safe zones, risk calc, row creation) remains the same
-
-        // Example (shortened):
         const whaleCount = tradeStats.buyVol >= WHALE_USD ? 1 : 0;
-        const zoneInfo = detectSafeZones(/* params */);
-        const risk = calculateRiskLevel(/* params */);
+        const isWhale    = whaleCount > 0;
+
+        // Alerts
+        if (tradeStats.buyVol > VOLUME_BUY_THR && tradeStats.buyVol > tradeStats.sellVol * 1.3) {
+          addLog(`BUY PRESSURE → ${coin.name} (${coin.symbol})`, "buy");
+        }
+        if (tradeStats.sellVol > VOLUME_SELL_THR && tradeStats.sellVol > tradeStats.buyVol * 1.3) {
+          addLog(`SELL PRESSURE → ${coin.name} (${coin.symbol})`, "sell");
+        }
+        if (isWhale) {
+          addLog(`WHALE BUY → ${coin.name} (${coin.symbol})`, "whale");
+        }
+
+        // Safe zones
+        const zoneInfo = detectSafeZones(
+          dexData.priceChange5mApprox,
+          dexData.priceChange24h,
+          dexData.liquidity,
+          tradeStats.buyVol,
+          tradeStats.sellVol,
+          dexData.lpLockedPct
+        );
+
+        // Risk
+        const risk = calculateRiskLevel(
+          dexData.liquidity,
+          holders,
+          dexData.priceChange5mApprox,
+          dexData.volume24h,
+          tradeStats.smallBuyCount,
+          dexData.lpLockedPct
+        );
+
+        if (risk.level === "high") {
+          addLog(`HIGH RISK → ${coin.name}: low liq/LP/holders`, "scam");
+        }
 
         const row = document.createElement("tr");
-        // ... fill row as before ...
+        if (isWhale) row.className = "whale";
+        if (risk.level === "high") row.classList.add("high-risk");
+        if (risk.level === "watch") row.classList.add("watch-risk");
+
+        row.innerHTML = `
+          <td>${coin.name}</td>
+          <td>${coin.symbol}</td>
+          <td>$${price.toFixed(6)}</td>
+          <td>${formatChange(dexData.priceChange5mApprox || 0)}</td>
+          <td>${formatChange(dexData.priceChange24h)}</td>
+          <td>${formatBig(marketCap)}</td>
+          <td>${formatBig(dexData.liquidity)}</td>
+          <td>${formatBig(dexData.volume24h)}</td>
+          <td>${formatHolders(holders)}</td>
+          <td class="${getSentimentClass(tradeStats.buyVol, tradeStats.sellVol)}">${tradeStats.buyCount || 0}↑ / ${tradeStats.sellCount || 0}↓</td>
+          <td class="${dexData.lpLockedPct >= 90 ? 'lp-locked' : dexData.lpLockedPct >= 50 ? 'lp-partial' : 'lp-unlocked'}">
+            ${formatLpLock(dexData.lpLockedPct)}
+          </td>
+          <td class="${risk.class}">${risk.text}</td>
+          <td class="${zoneInfo.alertType || ''}">${zoneInfo.zone}</td>
+          <td>${age}</td>
+          <td>${whaleCount > 0 ? `🐳 ${whaleCount}` : '-'}</td>
+          <td><a href="${dexData.url}" target="_blank" rel="noopener noreferrer">View</a></td>
+        `;
         tbody.appendChild(row);
       } catch (coinErr) {
         failedCount++;
-        // Silent per-coin failure - no crash, just skip
       }
     }
 
-    addLog(`Table refreshed (${failedCount > 0 ? failedCount + ' coins skipped' : 'OK'})`);
-  } catch (globalErr) {
-    addLog(`Global fetch failed: ${globalErr.message} — will retry next cycle`, "alert-retry");
+    addLog(`Table refreshed (${failedCount > 0 ? failedCount + ' skipped' : 'OK'})`);
+  } catch (err) {
+    addLog(`Global load failed: ${err.message} — retrying next cycle`, "alert-retry");
     tbody.innerHTML = "<tr><td colspan='16'>Data load failed — retrying next cycle...</td></tr>";
   }
 }
@@ -318,9 +426,9 @@ async function fetchAndShow() {
 // Auto-refresh
 setInterval(fetchAndShow, REFRESH_MS);
 
-// Initial load
+// Start
 fetchAndShow();
-addLog("Started — with retry logic enabled", "info");
+addLog("Started — all free APIs, no keys needed", "info");
 </script>
 
 </body>
