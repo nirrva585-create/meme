@@ -1,338 +1,250 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Solana Meme Whale + Jupiter DEX + TP/SL (Final)</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fast Safe Solana Meme Scanner – Holders + Rug/Bot Detection</title>
   <style>
-    body { font-family: system-ui, sans-serif; background: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
-    h1, h3 { color: #58a6ff; }
-    #wallet { text-align: center; margin: 10px 0; font-weight: bold; }
-    button { background: #238636; color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; margin: 4px; }
-    button:disabled { background: #444; cursor: not-allowed; }
-    table { width: 100%; border-collapse: collapse; margin: 20px 0; background: #161b22; border-radius: 8px; overflow: hidden; }
-    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #30363d; }
-    th { background: #21262d; }
-    .whale { background: #1f2a1a !important; }
-    .pnl-positive { color: #56d364; }
-    .pnl-negative { color: #f85149; }
-    #log { background: #0d1117; border: 1px solid #30363d; padding: 15px; height: 220px; overflow-y: auto; font-family: monospace; margin-top: 20px; border-radius: 6px; }
-    .alert-success { color: #56d364; font-weight: bold; }
-    .alert-danger  { color: #f85149; font-weight: bold; }
-    .alert-info    { color: #8b949e; }
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #0f0f1a;
+      color: #e0e0ff;
+      margin: 0;
+      padding: 20px;
+    }
+    h1 { text-align: center; color: #a78bfa; }
+    #controls { text-align: center; margin-bottom: 20px; }
+    button { 
+      background-color: #7c3aed; 
+      color: white; 
+      padding: 10px 20px; 
+      border: none; 
+      cursor: pointer; 
+      border-radius: 6px;
+      font-weight: bold;
+    }
+    button:hover { background-color: #9f7aea; }
+    table { 
+      width: 100%; 
+      border-collapse: collapse; 
+      margin-bottom: 20px; 
+      background: #161b22;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td { 
+      border: 1px solid #2d2d44; 
+      padding: 10px; 
+      text-align: left; 
+    }
+    th { 
+      background-color: #2d2d44; 
+      color: white; 
+    }
+    .safe   { background-color: rgba(86, 211, 100, 0.12); }
+    .watch  { background-color: rgba(242, 201, 76, 0.12); }
+    .danger { background-color: rgba(248, 81, 73, 0.18); font-weight: bold; }
+    .holders-low   { color: #f85149; }
+    .holders-mid   { color: #f2c94c; }
+    .holders-high  { color: #56d364; }
+    #log { 
+      background-color: #1e1e2e; 
+      border: 1px solid #444; 
+      padding: 15px; 
+      height: 240px; 
+      overflow-y: scroll; 
+      margin-top: 20px; 
+      font-family: monospace;
+      border-radius: 6px;
+    }
+    .alert { color: #ff6b6b; font-weight: bold; }
   </style>
 </head>
 <body>
 
-<h1>Solana Meme Whale Viewer + Jupiter DEX + TP/SL</h1>
+<h1>Fast Safe Meme Coin Scanner – Holders & Rug Detection</h1>
 
-<div id="wallet">Wallet: not connected</div>
-<button id="connect-wallet">Connect Phantom</button>
-<button id="refresh">Refresh Now</button>
+<div id="controls">
+  <button onclick="fetchAndShow()">Refresh Now</button>
+  <p>Refreshes every ~10–12 seconds • Only safe coins • Whale/Bot/Rug alerts with sound</p>
+</div>
 
-<h3>Hot Meme Coins</h3>
 <table>
   <thead>
     <tr>
       <th>Token</th>
-      <th>Symbol</th>
       <th>Price</th>
       <th>Market Cap</th>
       <th>Liquidity</th>
-      <th>Vol 24h</th>
-      <th>5m Δ</th>
-      <th>Whale Activity</th>
-      <th>Buy</th>
+      <th>5m Vol</th>
+      <th>5m Change</th>
+      <th>Holders</th>
+      <th>Rug Risk</th>
     </tr>
   </thead>
   <tbody id="coins-table"></tbody>
 </table>
 
-<h3>Open Positions (TP/SL)</h3>
-<table>
-  <thead>
-    <tr>
-      <th>Token</th>
-      <th>Amount</th>
-      <th>Entry</th>
-      <th>Current</th>
-      <th>PnL %</th>
-      <th>TP</th>
-      <th>SL</th>
-      <th>Sell</th>
-    </tr>
-  </thead>
-  <tbody id="positions-table"></tbody>
-</table>
+<div id="log"><strong>Alerts & Log</strong><br></div>
 
-<div id="log"><strong>Log & Alerts</strong><br></div>
-
-<script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@1.95.3/lib/index.iife.min.js"></script>
+<audio id="whale-buy" src="https://www.soundjay.com/buttons/beep-07.mp3"></audio>
+<audio id="bot-alert" src="https://www.soundjay.com/buttons/beep-10.mp3"></audio>
+<audio id="rug-alert" src="https://www.soundjay.com/buttons/beep-09.mp3"></audio>
 
 <script>
 // ────────────────────────────────────────────────
-// CONFIG
+// CONFIG – FAST & STABLE
 // ────────────────────────────────────────────────
-const connection = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
-let wallet = null;
-let positions = JSON.parse(localStorage.getItem("meme_positions") || "[]");
-
-const PUMP_API = "https://frontend-api.pump.fun/coins?offset=0&limit=10&sort=created_timestamp&order=desc";
-const DEXSCREENER = "https://api.dexscreener.com/latest/dex/search?q=";
-const JUPITER_QUOTE = "https://quote-api.jup.ag/v6/quote";
-const JUPITER_SWAP  = "https://quote-api.jup.ag/v6/swap";
-const SOL_MINT = "So11111111111111111111111111111111111111112";
-
-const LAMPORTS_PER_SOL = 1_000_000_000;
-const SLIPPAGE_BPS = 500;
-const DEFAULT_TP_PCT = 80;
-const DEFAULT_SL_PCT = -25;
-const REFRESH_MS = 25000; // 25 seconds — very safe
-
+const DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/pairs/solana?rankBy=volume&order=desc&limit=8";
+const BIRDEYE_OVERVIEW = "https://public-api.birdeye.so/defi/token_overview?address=";
+const REFRESH_BASE_MS = 10000; // 10 seconds base
 const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 3000;
+const RETRY_DELAY_MS = 1500;
+
+let lastGoodData = [];
+
+const whaleBuySound = document.getElementById("whale-buy");
+const botAlertSound = document.getElementById("bot-alert");
+const rugAlertSound = document.getElementById("rug-alert");
+
+const logDiv = document.getElementById("log");
+const tbody = document.getElementById("coins-table");
 
 // ────────────────────────────────────────────────
 // Log
 // ────────────────────────────────────────────────
-const logDiv = document.getElementById("log");
 function addLog(msg, type = "info") {
-  const div = document.createElement("div");
-  div.innerHTML = `[${new Date().toLocaleTimeString()}] ${msg}`;
-  div.className = `alert-${type}`;
-  logDiv.appendChild(div);
+  const p = document.createElement("p");
+  p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  if (type === "whale") p.style.color = "#7ee787";
+  if (type === "bot")   p.style.color = "#f2c94c";
+  if (type === "rug")   p.style.color = "#ff6b6b";
+  if (type === "retry") p.style.color = "#f2994a";
+  logDiv.appendChild(p);
   logDiv.scrollTop = logDiv.scrollHeight;
+
+  if (type === "whale") whaleBuySound.play().catch(() => {});
+  if (type === "bot")   botAlertSound.play().catch(() => {});
+  if (type === "rug")   rugAlertSound.play().catch(() => {});
 }
 
 // ────────────────────────────────────────────────
-// Wallet
+// Format
 // ────────────────────────────────────────────────
-document.getElementById("connect-wallet").onclick = async () => {
-  if ("solana" in window) {
-    wallet = window.solana;
-    try {
-      await wallet.connect();
-      document.getElementById("wallet").textContent = `Wallet: ${wallet.publicKey.toString().slice(0,8)}...`;
-      addLog("Phantom connected", "success");
-      renderPositions();
-    } catch (err) {
-      addLog("Connection failed: " + err.message, "danger");
-    }
-  } else {
-    addLog("Phantom not detected. Install it.", "danger");
-  }
-};
+function formatNumber(n) {
+  if (!n || n <= 0) return "—";
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return n.toFixed(0);
+}
 
-// ────────────────────────────────────────────────
-// Retry wrapper
-// ────────────────────────────────────────────────
-async function withRetry(fn, name = "fetch") {
-  let attempt = 0;
-  while (attempt < MAX_RETRIES) {
-    try {
-      return await fn();
-    } catch (err) {
-      attempt++;
-      if (attempt === MAX_RETRIES) {
-        addLog(`${name} failed after ${MAX_RETRIES} tries`, "danger");
-        return null;
-      }
-      await new Promise(r => setTimeout(r, RETRY_DELAY_MS * attempt));
-    }
-  }
+function formatHolders(n) {
+  if (!n || n <= 0) return "—";
+  if (n >= 10000) return (n / 1000).toFixed(1) + 'K+';
+  if (n >= 1000)  return (n / 1000).toFixed(1) + 'K';
+  return n.toLocaleString();
 }
 
 // ────────────────────────────────────────────────
-// Jupiter DEX
+// Holder count + Rug risk
 // ────────────────────────────────────────────────
-async function getJupiterQuote(inputMint, outputMint, amount) {
-  const url = `${JUPITER_QUOTE}?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${SLIPPAGE_BPS}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("Jupiter quote failed");
-  return res.json();
-}
+async function getHoldersAndRisk(mint, pair) {
+  const liq = pair.liquidity?.usd || 0;
+  const vol5m = pair.volume?.m5 || 0;
+  const change5m = pair.priceChange?.m5 || 0;
 
-async function getJupiterSwapTx(quote, userPubkey) {
-  const res = await fetch(JUPITER_SWAP, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      quoteResponse: quote,
-      userPublicKey: userPubkey,
-      wrapAndUnwrapSol: true,
-      computeUnitPriceMicroLamports: 150000
-    })
-  });
-  if (!res.ok) throw new Error("Jupiter swap tx failed");
-  const { swapTransaction } = await res.json();
-  return VersionedTransaction.deserialize(Buffer.from(swapTransaction, "base64"));
-}
-
-async function executeTx(tx) {
-  const signedTx = await wallet.signTransaction(tx);
-  const rawTx = signedTx.serialize();
-  const sig = await connection.sendRawTransaction(rawTx, { skipPreflight: true, maxRetries: 3 });
-  await connection.confirmTransaction(sig, "confirmed");
-  return sig;
-}
-
-// ────────────────────────────────────────────────
-// Buy / Sell
-// ────────────────────────────────────────────────
-async function buyToken(mint, solAmount = 0.05) {
-  if (!wallet?.publicKey) return addLog("Wallet not connected", "danger");
-
+  let holders = 0;
   try {
-    addLog(`Buying ~${solAmount} SOL of ${mint.slice(0,6)}...`);
-    const lamports = Math.floor(solAmount * LAMPORTS_PER_SOL);
-    const quote = await getJupiterQuote(SOL_MINT, mint, lamports);
-
-    const tx = await getJupiterSwapTx(quote, wallet.publicKey.toString());
-    const sig = await executeTx(tx);
-
-    addLog(`Buy success! Sig: ${sig.slice(0,8)}...`, "success");
-
-    const entryPrice = 150 / (Number(quote.outAmount) / 1e6); // rough USD
-    const tpPrice = entryPrice * (1 + DEFAULT_TP_PCT / 100);
-    const slPrice = entryPrice * (1 + DEFAULT_SL_PCT / 100);
-
-    positions.push({
-      mint,
-      name: "Token",
-      amount: Number(quote.outAmount) / 1e6,
-      entryPriceUsd: entryPrice,
-      tpPriceUsd: tpPrice,
-      slPriceUsd: slPrice,
-      timestamp: Date.now()
-    });
-
-    localStorage.setItem("meme_positions", JSON.stringify(positions));
-    renderPositions();
-  } catch (err) {
-    addLog("Buy failed: " + err.message, "danger");
-  }
-}
-
-async function sellToken(position) {
-  if (!wallet?.publicKey) return addLog("Wallet not connected", "danger");
-
-  try {
-    addLog(`Selling ${position.mint.slice(0,6)}...`);
-    const amount = Math.floor(position.amount * 1e6);
-    const quote = await getJupiterQuote(position.mint, SOL_MINT, amount);
-
-    const tx = await getJupiterSwapTx(quote, wallet.publicKey.toString());
-    const sig = await executeTx(tx);
-
-    addLog(`Sell success! Sig: ${sig.slice(0,8)}...`, "success");
-
-    positions = positions.filter(p => p.mint !== position.mint);
-    localStorage.setItem("meme_positions", JSON.stringify(positions));
-    renderPositions();
-  } catch (err) {
-    addLog("Sell failed: " + err.message, "danger");
-  }
-}
-
-// ────────────────────────────────────────────────
-// TP/SL Check
-// ────────────────────────────────────────────────
-async function checkTpSl() {
-  if (!positions.length) return;
-
-  for (const pos of [...positions]) {
-    try {
-      const res = await fetch(DEXSCREENER + encodeURIComponent(`${pos.mint} SOL`));
+    const res = await fetch(`${BIRDEYE_OVERVIEW}${mint}`, { headers: { 'x-chain': 'solana' } });
+    if (res.ok) {
       const data = await res.json();
-      const price = data.pairs?.[0]?.priceUsd || 0;
+      holders = data.data?.holder || 0;
+    }
+  } catch {}
 
-      if (price >= pos.tpPriceUsd) {
-        addLog(`TAKE PROFIT HIT → ${pos.mint.slice(0,6)} @ $${price.toFixed(6)}`, "success");
-        await sellToken(pos);
-      } else if (price <= pos.slPriceUsd) {
-        addLog(`STOP LOSS HIT → ${pos.mint.slice(0,6)} @ $${price.toFixed(6)}`, "danger");
-        await sellToken(pos);
-      }
-    } catch {}
+  let risk = "safe";
+  let reason = "";
+
+  // Rug pull flags
+  if (liq < 10000) {
+    risk = "danger";
+    reason = "Low liquidity – high rug risk";
   }
+  if (holders > 0 && holders < 150) {
+    risk = holders < 100 ? "danger" : "warning";
+    reason = reason ? reason + " + very few holders" : "Very few holders – concentrated / rug risk";
+  }
+  if (Math.abs(change5m) > 250 && vol5m < 8000) {
+    risk = "danger";
+    reason = reason ? reason + " + fake pump" : "Extreme 5m change + low vol – likely fake pump/rug";
+  }
+
+  const holderClass = holders < 200 ? "holders-low" : holders < 1000 ? "holders-mid" : "holders-high";
+
+  return { holders, holderClass, risk, reason };
 }
 
 // ────────────────────────────────────────────────
-// Render positions
-// ────────────────────────────────────────────────
-function renderPositions() {
-  const tbody = document.getElementById("positions-table");
-  tbody.innerHTML = "";
-
-  positions.forEach(pos => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${pos.mint.slice(0,6)}...</td>
-      <td>${pos.amount.toFixed(2)}</td>
-      <td>$${pos.entryPriceUsd.toFixed(6)}</td>
-      <td id="cur-${pos.mint}">...</td>
-      <td id="pnl-${pos.mint}">0%</td>
-      <td>TP: $${pos.tpPriceUsd.toFixed(4)} (+${DEFAULT_TP_PCT}%)</td>
-      <td>SL: $${pos.slPriceUsd.toFixed(4)} (${DEFAULT_SL_PCT}%)</td>
-      <td><button onclick="sellToken(${JSON.stringify(pos)})">Sell</button></td>
-    `;
-    tbody.appendChild(tr);
-
-    fetch(DEXSCREENER + encodeURIComponent(`${pos.mint} SOL`))
-      .then(r => r.json())
-      .then(d => {
-        const price = d.pairs?.[0]?.priceUsd || 0;
-        document.getElementById(`cur-${pos.mint}`).textContent = `$${price.toFixed(6)}`;
-        const pnl = ((price - pos.entryPriceUsd) / pos.entryPriceUsd * 100).toFixed(2);
-        const cls = pnl > 0 ? "pnl-positive" : pnl < 0 ? "pnl-negative" : "";
-        document.getElementById(`pnl-${pos.mint}`).innerHTML = `<span class="${cls}">${pnl}%</span>`;
-      });
-  });
-}
-
-// ────────────────────────────────────────────────
-// Main fetch
+// Fetch & render
 // ────────────────────────────────────────────────
 async function fetchAndShow() {
   try {
-    const res = await fetch(PUMP_API);
-    if (!res.ok) throw new Error("Pump API error");
-    const coins = await res.json();
+    const res = await fetch(DEXSCREENER_API);
+    if (!res.ok) throw new Error(`DexScreener ${res.status}`);
+    const data = await res.json();
+    const pairs = data.pairs || [];
 
-    const tbody = document.getElementById("coins-table");
     tbody.innerHTML = "";
 
-    for (const coin of coins) {
-      const price = coin.price || 0;
+    for (const pair of pairs) {
+      const mint = pair.baseToken.address;
+      const { holders, holderClass, risk, reason } = await getHoldersAndRisk(mint, pair);
+
+      // Filter very high risk
+      if (risk === "danger") continue;
+
       const row = document.createElement("tr");
+      row.className = risk === "safe" ? "safe" : "watch";
       row.innerHTML = `
-        <td>${coin.name}</td>
-        <td>${coin.symbol}</td>
-        <td>$${price.toFixed(6)}</td>
-        <td>N/A</td>
-        <td>N/A</td>
-        <td>N/A</td>
-        <td><button onclick="buyToken('${coin.mint}')">Buy 0.05 SOL</button></td>
+        <td>${pair.baseToken.name} (${pair.baseToken.symbol})</td>
+        <td>$${pair.priceUsd?.toFixed(6) || '—'}</td>
+        <td>$${formatNumber(pair.fdv)}</td>
+        <td>$${formatNumber(pair.liquidity?.usd)}</td>
+        <td>$${formatNumber(pair.volume?.m5)}</td>
+        <td>${pair.priceChange?.m5?.toFixed(2) || '—'}%</td>
+        <td class="${holderClass}">${formatHolders(holders)}</td>
+        <td>${reason || (risk === "safe" ? "Safe" : "Watch")}</td>
       `;
       tbody.appendChild(row);
     }
 
-    await checkTpSl();
-    renderPositions();
-    addLog("Table & positions updated", "success");
+    lastGoodData = pairs;
+    addLog("Refreshed successfully", "success");
   } catch (err) {
-    addLog("Data load failed: " + err.message + " — retrying...", "danger");
+    addLog(`Load failed: ${err.message} – showing cached data`, "retry");
+
+    tbody.innerHTML = "";
+    lastGoodData.forEach(pair => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${pair.baseToken.name} (${pair.baseToken.symbol}) [cached]</td>
+        <td>$${pair.priceUsd?.toFixed(6) || '—'}</td>
+        <td>$${formatNumber(pair.fdv)}</td>
+        <td>$${formatNumber(pair.liquidity?.usd)}</td>
+        <td>$${formatNumber(pair.volume?.m5)}</td>
+        <td>${pair.priceChange?.m5?.toFixed(2) || '—'}%</td>
+        <td>Cached</td>
+        <td>Cached (refresh later)</td>
+      `;
+      tbody.appendChild(row);
+    });
   }
 }
 
-// ────────────────────────────────────────────────
 // Start
-// ────────────────────────────────────────────────
-document.getElementById("refresh").onclick = fetchAndShow;
-setInterval(fetchAndShow, REFRESH_MS);
 fetchAndShow();
-renderPositions();
-addLog("Started — all free APIs, no keys needed", "success");
+setInterval(fetchAndShow, 10000); // 10 seconds
+addLog("Started – fast refresh with holder count & rug detection", "success");
 </script>
 
 </body>
