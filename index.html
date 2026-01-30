@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Safe Solana Meme Coin Scanner – Holders & Rug Detection</title>
+  <title>Safe Solana Meme Scanner – Whale Tx + Rug/Bot/Holders</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -47,11 +47,13 @@
     .holders-low   { color: #f85149; }
     .holders-mid   { color: #f2c94c; }
     .holders-high  { color: #56d364; }
+    .whale-buy  { color: #7ee787; font-weight: bold; }
+    .whale-sell { color: #ff6b6b; font-weight: bold; }
     #log { 
       background-color: #1e1e2e; 
       border: 1px solid #444; 
       padding: 15px; 
-      height: 240px; 
+      height: 260px; 
       overflow-y: scroll; 
       margin-top: 20px; 
       font-family: monospace;
@@ -62,11 +64,11 @@
 </head>
 <body>
 
-<h1>Fast Safe Meme Coin Scanner – Holders & Rug Detection</h1>
+<h1>Fast Safe Meme Scanner – Whale Transactions + Rug/Bot/Holders</h1>
 
 <div id="controls">
   <button onclick="fetchAndShow()">Refresh Now</button>
-  <p>Refreshes every ~10–12 seconds • Only safe coins • Whale/Bot/Rug alerts with sound</p>
+  <p>Refreshes every ~10–12 seconds • Only safe coins • Whale Tx / Bot / Rug alerts with sound</p>
 </div>
 
 <table>
@@ -79,31 +81,43 @@
       <th>5m Vol</th>
       <th>5m Change</th>
       <th>Holders</th>
+      <th>Whale Tx (5m)</th>
       <th>Rug Risk</th>
     </tr>
   </thead>
   <tbody id="coins-table"></tbody>
 </table>
 
-<div id="log"><strong>Alerts & Log</strong><br></div>
+<div id="log"><strong>Alerts & Log (Whale Tx / Bot / Rug)</strong><br></div>
 
 <audio id="whale-buy" src="https://www.soundjay.com/buttons/beep-07.mp3"></audio>
-<audio id="bot-alert" src="https://www.soundjay.com/buttons/beep-10.mp3"></audio>
+<audio id="whale-sell" src="https://www.soundjay.com/buttons/beep-10.mp3"></audio>
+<audio id="bot-alert" src="https://www.soundjay.com/buttons/beep-08b.mp3"></audio>
 <audio id="rug-alert" src="https://www.soundjay.com/buttons/beep-09.mp3"></audio>
 
 <script>
 // ────────────────────────────────────────────────
-// CONFIG – FAST & STABLE
+// CONFIG
 // ────────────────────────────────────────────────
 const DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/pairs/solana?rankBy=volume&order=desc&limit=8";
 const BIRDEYE_OVERVIEW = "https://public-api.birdeye.so/defi/token_overview?address=";
-const REFRESH_BASE_MS = 10000; // 10 seconds base
+const BIRDEYE_TRADE = "https://public-api.birdeye.so/defi/txs/token";
+const SOL_MINT = "So11111111111111111111111111111111111111112";
+
+const REFRESH_MS = 10000; // 10 seconds
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1500;
+
+const WHALE_SINGLE_TX_USD = 50000; // single trade > $50k = whale tx
+const LOW_LIQ_USD = 10000;
+const LOW_HOLDERS = 150;
+const FAKE_PUMP_CHANGE = 250;
+const LOW_VOL_5M = 8000;
 
 let lastGoodData = [];
 
 const whaleBuySound = document.getElementById("whale-buy");
+const whaleSellSound = document.getElementById("whale-sell");
 const botAlertSound = document.getElementById("bot-alert");
 const rugAlertSound = document.getElementById("rug-alert");
 
@@ -116,16 +130,18 @@ const tbody = document.getElementById("coins-table");
 function addLog(msg, type = "info") {
   const p = document.createElement("p");
   p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-  if (type === "whale") p.style.color = "#7ee787";
-  if (type === "bot")   p.style.color = "#f2c94c";
-  if (type === "rug")   p.style.color = "#ff6b6b";
+  if (type === "whale-buy") p.style.color = "#7ee787";
+  if (type === "whale-sell") p.style.color = "#ff6b6b";
+  if (type === "bot") p.style.color = "#f2c94c";
+  if (type === "rug") p.style.color = "#ff6b6b";
   if (type === "retry") p.style.color = "#f2994a";
   logDiv.appendChild(p);
   logDiv.scrollTop = logDiv.scrollHeight;
 
-  if (type === "whale") whaleBuySound.play().catch(() => {});
-  if (type === "bot")   botAlertSound.play().catch(() => {});
-  if (type === "rug")   rugAlertSound.play().catch(() => {});
+  if (type === "whale-buy") whaleBuySound.play().catch(() => {});
+  if (type === "whale-sell") whaleSellSound.play().catch(() => {});
+  if (type === "bot") botAlertSound.play().catch(() => {});
+  if (type === "rug") rugAlertSound.play().catch(() => {});
 }
 
 // ────────────────────────────────────────────────
@@ -141,57 +157,79 @@ function formatNumber(n) {
 function formatHolders(n) {
   if (!n || n <= 0) return "—";
   if (n >= 10000) return (n / 1000).toFixed(1) + 'K+';
-  if (n >= 1000)  return (n / 1000).toFixed(1) + 'K';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
   return n.toLocaleString();
 }
 
 // ────────────────────────────────────────────────
-function formatChange(pct) {
-  if (!pct && pct !== 0) return "—";
-  const sign = pct > 0 ? "+" : "";
-  const cls = pct > 10 ? "change-up" : pct < -10 ? "change-down" : "change-neutral";
-  return `<span class="${cls}">${sign}${pct.toFixed(2)}%</span>`;
-}
-
+// Whale Tx + Rug + Bot Detection
 // ────────────────────────────────────────────────
-// Holder count + Rug risk
-// ────────────────────────────────────────────────
-async function getHoldersAndRisk(mint, pair) {
+async function detectWhaleAndRisk(mint, pair) {
   const liq = pair.liquidity?.usd || 0;
   const vol5m = pair.volume?.m5 || 0;
   const change5m = pair.priceChange?.m5 || 0;
 
   let holders = 0;
+  let whaleTx = "None";
+  let whaleType = null;
+  let risk = "safe";
+  let reason = "";
+
+  // Holders
   try {
     const res = await fetch(`${BIRDEYE_OVERVIEW}${mint}`, { headers: { 'x-chain': 'solana' } });
     if (res.ok) {
       const data = await res.json();
       holders = data.data?.holder || 0;
     }
-  } catch (err) {
-    console.error("Birdeye holders fetch failed:", err);
-  }
+  } catch {}
 
-  let risk = "safe";
-  let reason = "";
+  // Whale transaction detection (large single trade)
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const from = now - 300;
+    const url = `${BIRDEYE_TRADE}?address=${mint}&tx_type=swap&sort_type=desc&from_time=${from}&to_time=${now}&limit=50&ui_amount_mode=raw`;
+    const res = await fetch(url, { headers: { 'x-chain': 'solana' } });
+    if (res.ok) {
+      const data = await res.json();
+      const trades = data.data?.items || [];
 
-  // Rug pull flags
-  if (liq < 10000) {
+      for (const t of trades) {
+        const usd = t.valueUsdc || t.valueUsd || 0;
+        if (usd > WHALE_SINGLE_TX_USD) {
+          if (t.tokenIn?.address === SOL_MINT && t.tokenOut?.address === mint) {
+            whaleTx = `Big Buy $${formatNumber(usd)}`;
+            whaleType = "buy";
+            addLog(`WHALE BUY TX DETECTED: ${pair.baseToken.name} – $${formatNumber(usd)} single buy`, "whale-buy");
+          } else if (t.tokenOut?.address === SOL_MINT && t.tokenIn?.address === mint) {
+            whaleTx = `Big Sell $${formatNumber(usd)}`;
+            whaleType = "sell";
+            addLog(`WHALE SELL/DUMP TX DETECTED: ${pair.baseToken.name} – $${formatNumber(usd)} single sell`, "whale-sell");
+          }
+          break; // only flag the largest one
+        }
+      }
+    }
+  } catch {}
+
+  // Rug risk
+  if (liq < LOW_LIQ_USD) {
     risk = "danger";
     reason = "Low liquidity – high rug risk";
   }
-  if (holders > 0 && holders < 150) {
-    risk = holders < 100 ? "danger" : "warning";
-    reason = reason ? reason + " + very few holders" : "Very few holders – concentrated / rug risk";
+  if (holders > 0 && holders < LOW_HOLDERS) {
+    risk = holders < 100 ? "danger" : "watch";
+    reason = reason ? reason + " + few holders" : "Very few holders – rug risk";
   }
-  if (Math.abs(change5m) > 250 && vol5m < 8000) {
+  if (Math.abs(change5m) > FAKE_PUMP_CHANGE && vol5m < LOW_VOL_5M) {
     risk = "danger";
-    reason = reason ? reason + " + fake pump" : "Extreme 5m change + low vol – likely fake pump/rug";
+    reason = reason ? reason + " + fake pump" : "Extreme 5m pump + low vol – likely rug";
   }
 
   const holderClass = holders < 200 ? "holders-low" : holders < 1000 ? "holders-mid" : "holders-high";
+  const whaleClass = whaleType === "buy" ? "whale-buy" : whaleType === "sell" ? "whale-sell" : "";
 
-  return { holders, holderClass, risk, reason };
+  return { holders, holderClass, whaleTx, whaleClass, risk, reason };
 }
 
 // ────────────────────────────────────────────────
@@ -208,9 +246,9 @@ async function fetchAndShow() {
 
     for (const pair of pairs) {
       const mint = pair.baseToken.address;
-      const { holders, holderClass, risk, reason } = await getHoldersAndRisk(mint, pair);
+      const { holders, holderClass, whaleTx, whaleClass, risk, reason } = await detectWhaleAndRisk(mint, pair);
 
-      // Filter very high risk
+      // Filter high rug risk
       if (risk === "danger") continue;
 
       const row = document.createElement("tr");
@@ -223,13 +261,14 @@ async function fetchAndShow() {
         <td>$${formatNumber(pair.volume?.m5)}</td>
         <td>${pair.priceChange?.m5?.toFixed(2) || '—'}%</td>
         <td class="${holderClass}">${formatHolders(holders)}</td>
+        <td class="${whaleClass}">${whaleTx || "—"}</td>
         <td>${reason || (risk === "safe" ? "Safe" : "Watch")}</td>
       `;
       tbody.appendChild(row);
     }
 
     lastGoodData = pairs;
-    addLog("Refreshed successfully");
+    addLog("Refreshed successfully", "success");
   } catch (err) {
     addLog(`Load failed: ${err.message} – showing cached data`, "retry");
 
@@ -244,6 +283,7 @@ async function fetchAndShow() {
         <td>$${formatNumber(pair.volume?.m5)}</td>
         <td>${pair.priceChange?.m5?.toFixed(2) || '—'}%</td>
         <td>Cached</td>
+        <td>Cached</td>
         <td>Cached (refresh later)</td>
       `;
       tbody.appendChild(row);
@@ -253,8 +293,8 @@ async function fetchAndShow() {
 
 // Start
 fetchAndShow();
-setInterval(fetchAndShow, 10000); // 10 seconds
-addLog("Started – fast refresh with holder count & rug detection");
+setInterval(fetchAndShow, REFRESH_MS);
+addLog("Started – fast refresh with whale tx, holders & rug detection", "success");
 </script>
 
 </body>
