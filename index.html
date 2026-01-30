@@ -3,75 +3,25 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Solana Meme Whale Viewer + Auto Scam/Rug/Safe Zones (No Keys)</title>
+  <title>Solana Meme Whale + Jupiter + TP/SL</title>
   <style>
-    body {
-      font-family: system-ui, sans-serif;
-      background: #0d1117;
-      color: #c9d1d9;
-      margin: 0;
-      padding: 20px;
-    }
-    h1 { color: #58a6ff; text-align: center; }
-    #controls { text-align: center; margin: 20px 0; }
-    button {
-      background: #238636;
-      color: white;
-      border: none;
-      padding: 10px 20px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 1rem;
-      margin: 0 10px;
-    }
-    button:hover { background: #2ea043; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin: 20px 0;
-      background: #161b22;
-      border-radius: 8px;
-      overflow: hidden;
-    }
-    th, td {
-      padding: 12px;
-      text-align: left;
-      border-bottom: 1px solid #30363d;
-    }
+    body { font-family: system-ui, sans-serif; background: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
+    h1, h3 { color: #58a6ff; }
+    #wallet { text-align: center; margin: 10px 0; font-weight: bold; }
+    button { background: #238636; color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; margin: 4px; }
+    button:disabled { background: #444; cursor: not-allowed; }
+    input { padding: 6px 10px; margin: 4px; width: 80px; background: #1e252e; color: white; border: 1px solid #444; border-radius: 4px; }
+    table { width: 100%; border-collapse: collapse; margin: 20px 0; background: #161b22; border-radius: 8px; overflow: hidden; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #30363d; }
     th { background: #21262d; }
     .whale { background: #1f2a1a !important; }
     .high-risk { background: rgba(248, 81, 73, 0.18) !important; }
     .watch-risk { background: rgba(242, 201, 76, 0.12) !important; }
-
-    .change-up    { color: #56d364; font-weight: bold; }
-    .change-down  { color: #f85149; font-weight: bold; }
-    .change-neutral { color: #8b949e; }
-
+    .pnl-positive { color: #56d364; }
+    .pnl-negative { color: #f85149; }
     .zone-buy  { color: #56d364; font-weight: bold; background: rgba(86, 211, 100, 0.1); }
     .zone-sell { color: #f2c94c; font-weight: bold; background: rgba(242, 201, 76, 0.1); }
-
-    .risk-safe   { color: #56d364; font-weight: bold; }
-    .risk-watch  { color: #f2c94c; font-weight: bold; }
-    .risk-danger { color: #f85149; font-weight: bold; }
-
-    .lp-locked   { color: #56d364; }
-    .lp-partial  { color: #f2c94c; }
-    .lp-unlocked { color: #f85149; font-weight: bold; }
-
-    a { color: #58a6ff; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-
-    #log {
-      background: #0d1117;
-      border: 1px solid #30363d;
-      padding: 15px;
-      height: 280px;
-      overflow-y: auto;
-      font-family: monospace;
-      font-size: 0.95rem;
-      border-radius: 6px;
-      margin-top: 20px;
-    }
+    #log { background: #0d1117; border: 1px solid #30363d; padding: 15px; height: 240px; overflow-y: auto; font-family: monospace; margin-top: 20px; border-radius: 6px; }
     .alert-buy   { color: #56d364; font-weight: bold; }
     .alert-sell  { color: #f2c94c; font-weight: bold; }
     .alert-whale { color: #f2c94c; font-weight: bold; }
@@ -81,13 +31,13 @@
 </head>
 <body>
 
-<h1>Solana Meme Coins — Whale + Auto Scam/Rug/Safe Zones</h1>
+<h1>Solana Meme Whale Viewer + Jupiter DEX + TP/SL</h1>
 
-<div id="controls">
-  <button onclick="fetchAndShow()">Refresh Now</button>
-  <p>Auto-refreshes every 15–20s • All free public APIs • No keys needed</p>
-</div>
+<div id="wallet">Wallet: not connected</div>
+<button id="connect-wallet">Connect Phantom</button>
+<button id="refresh">Refresh Now</button>
 
+<h3>Hot Meme Coins</h3>
 <table>
   <thead>
     <tr>
@@ -100,63 +50,72 @@
       <th>Liquidity</th>
       <th>Vol 24h</th>
       <th>Holders</th>
-      <th>Sentiment (5m)</th>
       <th>LP Safety</th>
       <th>Risk Alert</th>
       <th>Zone Alert</th>
-      <th>Age</th>
       <th>Whale (5m)</th>
-      <th>DexScreener</th>
+      <th>Action</th>
     </tr>
   </thead>
-  <tbody id="table-body"></tbody>
+  <tbody id="coins-table"></tbody>
 </table>
 
-<div id="log">
-  <strong>Alerts, Safe Zones & Warnings</strong><br>
-</div>
+<h3>Open Positions (with TP/SL)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Token</th>
+      <th>Amount</th>
+      <th>Entry Price</th>
+      <th>Current Price</th>
+      <th>PnL %</th>
+      <th>TP Level</th>
+      <th>SL Level</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+  <tbody id="positions-table"></tbody>
+</table>
 
-<!-- Sounds -->
-<audio id="whale-sound" src="https://www.soundjay.com/buttons/beep-07.mp3"></audio>
-<audio id="buy-sound"  src="https://www.soundjay.com/buttons/beep-08b.mp3"></audio>
-<audio id="sell-sound" src="https://www.soundjay.com/buttons/beep-10.mp3"></audio>
-<audio id="scam-sound" src="https://www.soundjay.com/buttons/beep-09.mp3"></audio>
-<audio id="zone-sound" src="https://www.soundjay.com/buttons/beep-01a.mp3"></audio>
+<div id="log"><strong>Log & Alerts</strong><br></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@1.95.3/lib/index.iife.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@solana/spl-token@0.4.8/lib/index.iife.min.js"></script>
 
 <script>
 // ────────────────────────────────────────────────
-// CONFIG – no keys needed
+// CONFIG
 // ────────────────────────────────────────────────
-const PUMP_API       = "https://frontend-api.pump.fun/coins?offset=0&limit=15&sort=created_timestamp&order=desc";
-const BIRDEYE_TRADE  = "https://public-api.birdeye.so/defi/txs/token";
-const BIRDEYE_TOKEN  = "https://public-api.birdeye.so/defi/token_overview?address=";
-const DEXSCREENER    = "https://api.dexscreener.com/latest/dex/search?q=";
-const SOL_MINT       = "So11111111111111111111111111111111111111112";
+const connection = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
+let wallet = null;
+let positions = JSON.parse(localStorage.getItem("meme_positions") || "[]");
 
-const WHALE_USD      = 500;
-const VOLUME_BUY_THR = 30000;
-const VOLUME_SELL_THR = 25000;
-const SAFE_BUY_DIP   = -15;
-const SAFE_SELL_PUMP = 50;
-const LOW_LIQ_THR    = 10000;
-const LOW_HOLDERS_THR = 150;
-const REFRESH_MS     = 18000; // 18s – safer for rate limits
+const PUMP_API = "https://frontend-api.pump.fun/coins?offset=0&limit=12&sort=created_timestamp&order=desc";
+const DEXSCREENER = "https://api.dexscreener.com/latest/dex/search?q=";
+const BIRDEYE_TOKEN = "https://public-api.birdeye.so/defi/token_overview?address=";
+const BIRDEYE_TRADE = "https://public-api.birdeye.so/defi/txs/token";
+const JUPITER_QUOTE = "https://quote-api.jup.ag/v6/quote";
+const JUPITER_SWAP  = "https://quote-api.jup.ag/v6/swap";
+const SOL_MINT = "So11111111111111111111111111111111111111112";
 
-const MAX_RETRIES    = 3;
+const LAMPORTS_PER_SOL = 1_000_000_000;
+const SLIPPAGE_BPS = 500;
+const DEFAULT_TP_PCT = 80;
+const DEFAULT_SL_PCT = -25;
+const REFRESH_MS = 18000;
+const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
 
-const whaleSound = document.getElementById("whale-sound");
-const buySound   = document.getElementById("buy-sound");
-const sellSound  = document.getElementById("sell-sound");
-const scamSound  = document.getElementById("scam-sound");
-const zoneSound  = document.getElementById("zone-sound");
+const whaleSound = new Audio("https://www.soundjay.com/buttons/beep-07.mp3");
+const buySound   = new Audio("https://www.soundjay.com/buttons/beep-08b.mp3");
+const sellSound  = new Audio("https://www.soundjay.com/buttons/beep-10.mp3");
+const scamSound  = new Audio("https://www.soundjay.com/buttons/beep-09.mp3");
+const zoneSound  = new Audio("https://www.soundjay.com/buttons/beep-01a.mp3");
 
 // ────────────────────────────────────────────────
-// DOM + Log
+// Log
 // ────────────────────────────────────────────────
 const logDiv = document.getElementById("log");
-const tbody  = document.getElementById("table-body");
-
 function addLog(msg, type = "info") {
   const div = document.createElement("div");
   div.innerHTML = `[${new Date().toLocaleTimeString()}] ${msg}`;
@@ -167,11 +126,30 @@ function addLog(msg, type = "info") {
   if (type.includes("buy") || type.includes("zone-buy")) zoneSound.play().catch(() => {});
   if (type.includes("sell") || type.includes("zone-sell")) sellSound.play().catch(() => {});
   if (type === "whale") whaleSound.play().catch(() => {});
-  if (type === "scam")  scamSound.play().catch(() => {});
+  if (type === "scam") scamSound.play().catch(() => {});
 }
 
 // ────────────────────────────────────────────────
-// Retry wrapper
+// Wallet Connection
+// ────────────────────────────────────────────────
+document.getElementById("connect-wallet").onclick = async () => {
+  if ("solana" in window) {
+    wallet = window.solana;
+    try {
+      await wallet.connect();
+      document.getElementById("wallet").textContent = `Wallet: ${wallet.publicKey.toString().slice(0,8)}...`;
+      addLog("Phantom connected");
+      renderPositions();
+    } catch (err) {
+      addLog("Connection failed: " + err.message);
+    }
+  } else {
+    addLog("Phantom not detected. Install it.");
+  }
+};
+
+// ────────────────────────────────────────────────
+// Retry Wrapper
 // ────────────────────────────────────────────────
 async function withRetry(fn, name = "fetch") {
   let attempt = 0;
@@ -183,7 +161,7 @@ async function withRetry(fn, name = "fetch") {
       const delay = RETRY_DELAY_MS * Math.pow(2, attempt - 1);
       if (attempt === MAX_RETRIES) {
         addLog(`${name} failed after ${MAX_RETRIES} tries: ${err.message}`, "alert-retry");
-        return null; // silent fail – return null instead of crashing
+        return null;
       }
       await new Promise(r => setTimeout(r, delay));
     }
@@ -191,7 +169,7 @@ async function withRetry(fn, name = "fetch") {
 }
 
 // ────────────────────────────────────────────────
-// Data fetchers (all free & public)
+// Data Fetchers
 // ────────────────────────────────────────────────
 async function getDexScreenerData(mint) {
   return withRetry(async () => {
@@ -206,7 +184,7 @@ async function getDexScreenerData(mint) {
         volume24h: p.volume?.h24 || 0,
         priceChange24h: p.priceChange?.h24 || 0,
         priceChange5mApprox: p.priceChange?.m5 || 0,
-        lpLockedPct: p.liquidity?.lockedPct || 0 // some pairs expose this
+        lpLockedPct: p.liquidity?.lockedPct || 0
       };
     }
     return { url: `https://dexscreener.com/solana/${mint}`, liquidity: 0, volume24h: 0, priceChange24h: 0, priceChange5mApprox: 0, lpLockedPct: 0 };
@@ -246,189 +224,196 @@ async function getHoldersCount(mint) {
 }
 
 // ────────────────────────────────────────────────
-// Risk & Zone Logic (no RugCheck key needed)
+// Jupiter DEX
 // ────────────────────────────────────────────────
-function calculateRiskLevel(liquidity, holders, priceChange5m, volume24h, smallBuyCount, lpLockedPct) {
-  let score = 0;
-
-  if (liquidity < LOW_LIQ_THR) score += 4;
-  if (holders < LOW_HOLDERS_THR) score += 3;
-  if (priceChange5m > FAKE_PUMP_THR && volume24h < 50000) score += 3;
-  if (smallBuyCount > 12) score += 2;
-  if (lpLockedPct < 50 && lpLockedPct > 0) score += 3; // partial lock penalty
-
-  if (score >= 8) return { level: "high", text: `🔴 High Risk (low liq/LP/holders)`, class: "risk-danger" };
-  if (score >= 4) return { level: "watch", text: `🟡 Watch (early / partial LP)`, class: "risk-watch" };
-  return { level: "safe", text: `🟢 Safe`, class: "risk-safe" };
+async function getJupiterQuote(inputMint, outputMint, amount) {
+  const url = `${JUPITER_QUOTE}?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${SLIPPAGE_BPS}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("Jupiter quote failed");
+  return res.json();
 }
 
-function formatLpLock(pct) {
-  if (pct <= 0 || !pct) return "— (no data)";
-  if (pct >= 90) return `<span class="lp-locked">Locked (${pct.toFixed(0)}%)</span>`;
-  if (pct >= 50) return `<span class="lp-partial">Partial (${pct.toFixed(0)}%)</span>`;
-  return `<span class="lp-unlocked">Low/Unlocked (${pct.toFixed(0)}%)</span>`;
+async function getJupiterSwapTx(quote, userPubkey) {
+  const res = await fetch(JUPITER_SWAP, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      quoteResponse: quote,
+      userPublicKey: userPubkey,
+      wrapAndUnwrapSol: true,
+      computeUnitPriceMicroLamports: 150000
+    })
+  });
+  if (!res.ok) throw new Error("Jupiter swap tx failed");
+  const { swapTransaction } = await res.json();
+  return VersionedTransaction.deserialize(Buffer.from(swapTransaction, "base64"));
 }
 
-function detectSafeZones(priceChange5m, priceChange24h, liquidity, buyVol, sellVol, lpLockedPct) {
-  let zone = "-";
-  let alertType = null;
-  let msg = "";
-
-  // Safe Buy Zone
-  if ((priceChange5m < SAFE_BUY_DIP || priceChange24h < SAFE_BUY_DIP * 1.5) &&
-      liquidity > LOW_LIQ_THR * 1.5 &&
-      buyVol > sellVol * 1.2 &&
-      lpLockedPct >= 50) {
-    zone = "🟢 Safe Buy Zone";
-    alertType = "zone-buy";
-    msg = `SAFE BUY ZONE → ${coin.name} dipped but liq & LP support rebound`;
-  }
-
-  // Safe Sell Zone
-  if (priceChange5m > SAFE_SELL_PUMP || priceChange24h > SAFE_SELL_PUMP * 2) {
-    zone = "🟡 Safe Sell Zone";
-    alertType = "zone-sell";
-    msg = `TAKE PROFIT ZONE → ${coin.name} pumped hard — consider exit`;
-  }
-
-  if (msg) addLog(msg, alertType);
-
-  return { zone, alertType };
+async function executeTx(tx) {
+  const signedTx = await wallet.signTransaction(tx);
+  const rawTx = signedTx.serialize();
+  const sig = await connection.sendRawTransaction(rawTx, { skipPreflight: true, maxRetries: 3 });
+  await connection.confirmTransaction(sig, "confirmed");
+  return sig;
 }
 
 // ────────────────────────────────────────────────
-// Formatters (unchanged)
+// Buy / Sell with TP/SL
 // ────────────────────────────────────────────────
-function formatChange(pct) {
-  if (!pct && pct !== 0) return "—";
-  const sign = pct > 0 ? "+" : "";
-  const cls = pct > 10 ? "change-up" : pct < -10 ? "change-down" : "change-neutral";
-  return `<span class="${cls}">${sign}${pct.toFixed(2)}% ${pct > 0 ? '↑' : pct < 0 ? '↓' : ''}</span>`;
-}
-
-function formatBig(n) {
-  if (!n || n <= 0) return "—";
-  if (n >= 1e6) return `$${(n/1e6).toFixed(2)}M`;
-  if (n >= 1e3) return `$${(n/1e3).toFixed(1)}K`;
-  return `$${n.toFixed(0)}`;
-}
-
-function formatHolders(n) {
-  if (!n || n <= 0) return "—";
-  return n.toLocaleString();
-}
-
-function getSentimentClass(buyVol, sellVol) {
-  if (buyVol > sellVol * 1.5) return "sentiment-buy";
-  if (sellVol > buyVol * 1.5) return "sentiment-sell";
-  return "sentiment-neut";
-}
-
-// ────────────────────────────────────────────────
-// Main loop
-// ────────────────────────────────────────────────
-async function fetchAndShow() {
-  let failedCount = 0;
+async function buyToken(mint, solAmount = 0.05) {
+  if (!wallet?.publicKey) return addLog("Wallet not connected");
 
   try {
-    const coins = await withRetry(async () => {
-      const res = await fetch(PUMP_API);
-      if (!res.ok) throw new Error(`Pump API ${res.status}`);
-      return await res.json();
-    }, "Pump.fun list", 2);
+    addLog(`Buying ~${solAmount} SOL of ${mint.slice(0,6)}...`);
+    const lamports = Math.floor(solAmount * LAMPORTS_PER_SOL);
+    const quote = await getJupiterQuote(SOL_MINT, mint, lamports);
 
+    const tx = await getJupiterSwapTx(quote, wallet.publicKey.toString());
+    const sig = await executeTx(tx);
+
+    addLog(`Buy success! Sig: ${sig.slice(0,8)}...`);
+
+    const solPrice = 150; // fallback
+    const entryPrice = (solAmount * solPrice) / (Number(quote.outAmount) / 1e6);
+    const tpPrice = entryPrice * (1 + DEFAULT_TP_PCT / 100);
+    const slPrice = entryPrice * (1 + DEFAULT_SL_PCT / 100);
+
+    positions.push({
+      mint,
+      name: coin?.name || "Token",
+      amount: Number(quote.outAmount) / 1e6,
+      entryPriceUsd: entryPrice,
+      tpPriceUsd: tpPrice,
+      slPriceUsd: slPrice,
+      timestamp: Date.now()
+    });
+
+    localStorage.setItem("meme_positions", JSON.stringify(positions));
+    renderPositions();
+  } catch (err) {
+    addLog("Buy failed: " + err.message);
+  }
+}
+
+async function sellToken(position) {
+  if (!wallet?.publicKey) return addLog("Wallet not connected");
+
+  try {
+    addLog(`Selling ${position.mint.slice(0,6)}...`);
+    const amount = Math.floor(position.amount * 1e6);
+    const quote = await getJupiterQuote(position.mint, SOL_MINT, amount);
+
+    const tx = await getJupiterSwapTx(quote, wallet.publicKey.toString());
+    const sig = await executeTx(tx);
+
+    addLog(`Sell success! Sig: ${sig.slice(0,8)}...`);
+
+    positions = positions.filter(p => p.mint !== position.mint);
+    localStorage.setItem("meme_positions", JSON.stringify(positions));
+    renderPositions();
+  } catch (err) {
+    addLog("Sell failed: " + err.message);
+  }
+}
+
+// ────────────────────────────────────────────────
+// TP/SL Check
+// ────────────────────────────────────────────────
+async function checkTpSl() {
+  if (!positions.length) return;
+
+  for (const pos of [...positions]) {
+    try {
+      const res = await fetch(DEXSCREENER + encodeURIComponent(`${pos.mint} SOL`));
+      const data = await res.json();
+      const currentPrice = data.pairs?.[0]?.priceUsd || 0;
+
+      if (currentPrice >= pos.tpPriceUsd) {
+        addLog(`TAKE PROFIT HIT → ${pos.mint.slice(0,6)} @ $${currentPrice.toFixed(6)}`);
+        await sellToken(pos);
+      } else if (currentPrice <= pos.slPriceUsd) {
+        addLog(`STOP LOSS HIT → ${pos.mint.slice(0,6)} @ $${currentPrice.toFixed(6)}`);
+        await sellToken(pos);
+      }
+    } catch {}
+  }
+}
+
+// ────────────────────────────────────────────────
+// Render positions
+// ────────────────────────────────────────────────
+function renderPositions() {
+  const tbody = document.getElementById("positions-table");
+  tbody.innerHTML = "";
+
+  positions.forEach(pos => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${pos.mint.slice(0,6)}...</td>
+      <td>${pos.amount.toFixed(2)}</td>
+      <td>$${pos.entryPriceUsd.toFixed(6)}</td>
+      <td id="cur-${pos.mint}">Loading...</td>
+      <td id="pnl-${pos.mint}">0%</td>
+      <td>TP: $${pos.tpPriceUsd.toFixed(6)} (+${DEFAULT_TP_PCT}%)</td>
+      <td>SL: $${pos.slPriceUsd.toFixed(6)} (${DEFAULT_SL_PCT}%)</td>
+      <td><button onclick="sellToken(${JSON.stringify(pos)})">Sell</button></td>
+    `;
+    tbody.appendChild(tr);
+
+    fetch(DEXSCREENER + encodeURIComponent(`${pos.mint} SOL`))
+      .then(r => r.json())
+      .then(d => {
+        const price = d.pairs?.[0]?.priceUsd || 0;
+        document.getElementById(`cur-${pos.mint}`).textContent = `$${price.toFixed(6)}`;
+        const pnl = ((price - pos.entryPriceUsd) / pos.entryPriceUsd * 100).toFixed(2);
+        const cls = pnl > 0 ? "pnl-positive" : pnl < 0 ? "pnl-negative" : "";
+        document.getElementById(`pnl-${pos.mint}`).innerHTML = `<span class="${cls}">${pnl}%</span>`;
+      });
+  });
+}
+
+// ────────────────────────────────────────────────
+// Main fetch (simplified whale/risk logic)
+// ────────────────────────────────────────────────
+async function fetchAndShow() {
+  try {
+    const res = await fetch(PUMP_API);
+    const coins = await res.json();
+
+    const tbody = document.getElementById("coins-table");
     tbody.innerHTML = "";
 
     for (const coin of coins) {
-      try {
-        const [dexData, tradeStats, holders] = await Promise.all([
-          getDexScreenerData(coin.mint),
-          getRecentTradeStats(coin.mint),
-          getHoldersCount(coin.mint)
-        ]);
-
-        const whaleCount = tradeStats.buyVol >= WHALE_USD ? 1 : 0;
-        const isWhale    = whaleCount > 0;
-
-        // Alerts
-        if (tradeStats.buyVol > VOLUME_BUY_THR && tradeStats.buyVol > tradeStats.sellVol * 1.3) {
-          addLog(`BUY PRESSURE → ${coin.name} (${coin.symbol})`, "buy");
-        }
-        if (tradeStats.sellVol > VOLUME_SELL_THR && tradeStats.sellVol > tradeStats.buyVol * 1.3) {
-          addLog(`SELL PRESSURE → ${coin.name} (${coin.symbol})`, "sell");
-        }
-        if (isWhale) {
-          addLog(`WHALE BUY → ${coin.name} (${coin.symbol})`, "whale");
-        }
-
-        // Safe zones
-        const zoneInfo = detectSafeZones(
-          dexData.priceChange5mApprox,
-          dexData.priceChange24h,
-          dexData.liquidity,
-          tradeStats.buyVol,
-          tradeStats.sellVol,
-          dexData.lpLockedPct
-        );
-
-        // Risk
-        const risk = calculateRiskLevel(
-          dexData.liquidity,
-          holders,
-          dexData.priceChange5mApprox,
-          dexData.volume24h,
-          tradeStats.smallBuyCount,
-          dexData.lpLockedPct
-        );
-
-        if (risk.level === "high") {
-          addLog(`HIGH RISK → ${coin.name}: low liq/LP/holders`, "scam");
-        }
-
-        const row = document.createElement("tr");
-        if (isWhale) row.className = "whale";
-        if (risk.level === "high") row.classList.add("high-risk");
-        if (risk.level === "watch") row.classList.add("watch-risk");
-
-        row.innerHTML = `
-          <td>${coin.name}</td>
-          <td>${coin.symbol}</td>
-          <td>$${price.toFixed(6)}</td>
-          <td>${formatChange(dexData.priceChange5mApprox || 0)}</td>
-          <td>${formatChange(dexData.priceChange24h)}</td>
-          <td>${formatBig(marketCap)}</td>
-          <td>${formatBig(dexData.liquidity)}</td>
-          <td>${formatBig(dexData.volume24h)}</td>
-          <td>${formatHolders(holders)}</td>
-          <td class="${getSentimentClass(tradeStats.buyVol, tradeStats.sellVol)}">${tradeStats.buyCount || 0}↑ / ${tradeStats.sellCount || 0}↓</td>
-          <td class="${dexData.lpLockedPct >= 90 ? 'lp-locked' : dexData.lpLockedPct >= 50 ? 'lp-partial' : 'lp-unlocked'}">
-            ${formatLpLock(dexData.lpLockedPct)}
-          </td>
-          <td class="${risk.class}">${risk.text}</td>
-          <td class="${zoneInfo.alertType || ''}">${zoneInfo.zone}</td>
-          <td>${age}</td>
-          <td>${whaleCount > 0 ? `🐳 ${whaleCount}` : '-'}</td>
-          <td><a href="${dexData.url}" target="_blank" rel="noopener noreferrer">View</a></td>
-        `;
-        tbody.appendChild(row);
-      } catch (coinErr) {
-        failedCount++;
-      }
+      const price = coin.price || 0;
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${coin.name}</td>
+        <td>${coin.symbol}</td>
+        <td>$${price.toFixed(6)}</td>
+        <td>N/A</td>
+        <td>N/A</td>
+        <td>N/A</td>
+        <td><button onclick="buyToken('${coin.mint}')">Buy 0.05 SOL</button></td>
+      `;
+      tbody.appendChild(row);
     }
 
-    addLog(`Table refreshed (${failedCount > 0 ? failedCount + ' skipped' : 'OK'})`);
+    await checkTpSl();
+    renderPositions();
+    addLog("Table & positions updated");
   } catch (err) {
-    addLog(`Global load failed: ${err.message} — retrying next cycle`, "alert-retry");
-    tbody.innerHTML = "<tr><td colspan='16'>Data load failed — retrying next cycle...</td></tr>";
+    addLog("Data load failed: " + err.message);
   }
 }
 
-// Auto-refresh
-setInterval(fetchAndShow, REFRESH_MS);
-
+// ────────────────────────────────────────────────
 // Start
+// ────────────────────────────────────────────────
+document.getElementById("refresh").onclick = fetchAndShow;
+setInterval(fetchAndShow, REFRESH_MS);
 fetchAndShow();
-addLog("Started — all free APIs, no keys needed", "info");
+renderPositions();
+addLog("Started — Jupiter DEX + TP/SL active");
 </script>
 
 </body>
