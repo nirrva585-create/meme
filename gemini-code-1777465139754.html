@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Custom XAU/USD AI Engine</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0b0e14; color: #d1d4dc; margin: 0; padding: 20px; }
+        .header { display: flex; flex-direction: column; gap: 15px; margin-bottom: 15px; }
+        .top-row { display: flex; justify-content: space-between; align-items: center; }
+        .controls { display: flex; gap: 10px; align-items: center; background: #151924; padding: 10px; border-radius: 6px; border: 1px solid #2a2e39;}
+        button { background: #2a2e39; color: #d1d4dc; border: 1px solid #363c4e; padding: 8px 16px; border-radius: 4px; cursor: pointer; transition: 0.2s; font-weight: bold;}
+        button:hover { background: #363c4e; }
+        button.active { background: #2962ff; color: white; border-color: #2962ff; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .toggle-container { display: flex; align-items: center; gap: 8px; margin-left: 10px; padding-left: 15px; border-left: 1px solid #363c4e;}
+        
+        /* Custom Canvas Container */
+        #chart-container { 
+            width: 100%; 
+            height: 550px; 
+            background: #131722; 
+            border: 1px solid #363c4e; 
+            border-radius: 4px; 
+            position: relative; 
+            overflow: hidden;
+        }
+        canvas { display: block; width: 100%; height: 100%; }
+        
+        .ai-panel { margin-top: 15px; padding: 15px; background: #151924; border-radius: 4px; border-left: 4px solid #00e676; display: flex; justify-content: space-between; align-items: center; border-right: 1px solid #2a2e39; border-top: 1px solid #2a2e39; border-bottom: 1px solid #2a2e39;}
+        #loading { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(21, 25, 36, 0.9); padding: 15px 25px; border-radius: 4px; z-index: 10; border: 1px solid #2962ff; font-weight: bold; color: #fff;}
+        .status-badge { background: #00e676; color: #0b0e14; padding: 3px 10px; border-radius: 12px; font-size: 0.8em; font-weight: bold; margin-left: 10px; animation: pulse 2s infinite;}
+        
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="top-row">
+            <h2 style="margin: 0; display: flex; align-items: center;">
+                XAU/USD Custom AI Engine <span class="status-badge" id="live-indicator">LIVE AUTO-SYNC</span>
+            </h2>
+            <div style="font-size: 0.9em; color: #787b86;">No External Libraries Used</div>
+        </div>
+        <div class="controls">
+            <button class="tf-btn active" data-interval="5min">5m</button>
+            <button class="tf-btn" data-interval="15min">15m</button>
+            <button class="tf-btn" data-interval="1h">1H</button>
+            <button class="tf-btn" data-interval="4h">4H</button>
+            
+            <div class="toggle-container">
+                <input type="checkbox" id="sr-toggle" checked>
+                <label for="sr-toggle">Auto Support/Resistance</label>
+            </div>
+            
+            <div style="margin-left: auto; color: #787b86; font-size: 0.9em;" id="next-update">Next update in: 30s</div>
+        </div>
+    </div>
+
+    <div id="chart-container">
+        <div id="loading">Initializing Neural Market Scan...</div>
+        <canvas id="customChart"></canvas>
+    </div>
+    
+    <div class="ai-panel">
+        <div style="flex: 1;"><strong>🤖 AI Analyst:</strong> <span id="ai-status">Awaiting data...</span></div>
+        <div id="last-update" style="font-size: 0.9em; color: #787b86;"></div>
+    </div>
+
+    <script>
+        // --- 1. Engine Configuration ---
+        const API_KEY = "b2c7d75a119049978c58ea7514b72be9";
+        let currentData = [];
+        let isFetching = false;
+        let activeInterval = '5min';
+        let autoSyncTimer = null;
+        let countdownTimer = null;
+        let secondsToUpdate = 30;
+
+        // --- 2. Custom Canvas Setup ---
+        const canvas = document.getElementById('customChart');
+        const ctx = canvas.getContext('2d');
+        const container = document.getElementById('chart-container');
+
+        // Resize canvas to match container exactly
+        function resizeCanvas() {
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            if(currentData.length > 0) renderChart();
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        // --- 3. Custom Rendering Engine ---
+        function renderChart() {
+            if (!currentData || currentData.length === 0) return;
+
+            // Clear Canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const padding = { top: 40, bottom: 40, left: 10, right: 80 }; // Space for labels
+            const drawWidth = canvas.width - padding.left - padding.right;
+            const drawHeight = canvas.height - padding.top - padding.bottom;
+
+            // Find Min/Max for Y-Axis Scaling
+            const maxPrice = Math.max(...currentData.map(d => d.high));
+            const minPrice = Math.min(...currentData.map(d => d.low));
+            const priceRange = maxPrice - minPrice || 1; // Prevent div by 0
+
+            // Helper to convert price to Y pixel coordinate
+            const getY = (price) => padding.top + drawHeight - ((price - minPrice) / priceRange) * drawHeight;
+
+            // Draw Background Grid & Price Scale
+            ctx.strokeStyle = '#2a2e39';
+            ctx.lineWidth = 1;
+            ctx.fillStyle = '#787b86';
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'left';
+
+            const gridLines = 5;
+            for (let i = 0; i <= gridLines; i++) {
+                const y = padding.top + (drawHeight / gridLines) * i;
+                const priceLevel = maxPrice - (priceRange / gridLines) * i;
+                
+                // Draw horizontal line
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width - padding.right, y);
+                ctx.stroke();
+
+                // Draw price label
+                ctx.fillText(priceLevel.toFixed(2), canvas.width - padding.right + 10, y + 4);
+            }
+
+            // Draw Candlesticks
+            const candleWidth = (drawWidth / currentData.length) * 0.8;
+            const spacing = (drawWidth / currentData.length);
+
+            let latestSignal = "Market consolidating. No strong setups detected.";
+
+            currentData.forEach((candle, index) => {
+                const x = padding.left + (index * spacing) + (spacing / 2);
+                const isBullish = candle.close >= candle.open;
+                
+                ctx.strokeStyle = isBullish ? '#00e676' : '#ff5252';
+                ctx.fillStyle = isBullish ? '#00e676' : '#ff5252';
+
+                // Draw Wick
+                ctx.beginPath();
+                ctx.moveTo(x, getY(candle.high));
+                ctx.lineTo(x, getY(candle.low));
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                // Draw Body
+                const yOpen = getY(candle.open);
+                const yClose = getY(candle.close);
+                const bodyHeight = Math.abs(yClose - yOpen) || 1; // minimum 1px height
+                const yTop = Math.min(yOpen, yClose);
+                
+                ctx.fillRect(x - candleWidth/2, yTop, candleWidth, bodyHeight);
+
+                // --- AI Signal Logic (Engulfing Patterns) ---
+                if (index > 0) {
+                    const prev = currentData[index - 1];
+                    // Bullish Engulfing
+                    if (prev.close < prev.open && candle.close > candle.open && candle.open <= prev.close && candle.close >= prev.open) {
+                        ctx.fillStyle = '#00e676';
+                        ctx.beginPath();
+                        ctx.moveTo(x, getY(candle.low) + 10);
+                        ctx.lineTo(x - 5, getY(candle.low) + 20);
+                        ctx.lineTo(x + 5, getY(candle.low) + 20);
+                        ctx.fill();
+                        latestSignal = `📈 Strong Bullish Engulfing detected at ${candle.close.toFixed(2)}. Buying pressure rising.`;
+                    }
+                    // Bearish Engulfing
+                    else if (prev.close > prev.open && candle.close < candle.open && candle.open >= prev.close && candle.close <= prev.open) {
+                        ctx.fillStyle = '#ff5252';
+                        ctx.beginPath();
+                        ctx.moveTo(x, getY(candle.high) - 10);
+                        ctx.lineTo(x - 5, getY(candle.high) - 20);
+                        ctx.lineTo(x + 5, getY(candle.high) - 20);
+                        ctx.fill();
+                        latestSignal = `📉 Bearish Rejection detected at ${candle.close.toFixed(2)}. Sellers taking control.`;
+                    }
+                }
+            });
+
+            document.getElementById('ai-status').innerText = latestSignal;
+
+            // --- Support & Resistance Logic ---
+            if (document.getElementById('sr-toggle').checked) {
+                // Calculate local min/max over last 50 candles
+                const lookback = currentData.slice(-50);
+                const resPrice = Math.max(...lookback.map(d => d.high));
+                const supPrice = Math.min(...lookback.map(d => d.low));
+
+                ctx.setLineDash([5, 5]); // Dashed lines
+                ctx.lineWidth = 2;
+
+                // Resistance (Red)
+                ctx.strokeStyle = 'rgba(255, 82, 82, 0.8)';
+                ctx.beginPath();
+                ctx.moveTo(padding.left, getY(resPrice));
+                ctx.lineTo(canvas.width - padding.right, getY(resPrice));
+                ctx.stroke();
+                ctx.fillStyle = '#ff5252';
+                ctx.fillText("RES", canvas.width - padding.right + 10, getY(resPrice) - 5);
+
+                // Support (Green)
+                ctx.strokeStyle = 'rgba(0, 230, 118, 0.8)';
+                ctx.beginPath();
+                ctx.moveTo(padding.left, getY(supPrice));
+                ctx.lineTo(canvas.width - padding.right, getY(supPrice));
+                ctx.stroke();
+                ctx.fillStyle = '#00e676';
+                ctx.fillText("SUP", canvas.width - padding.right + 10, getY(supPrice) + 15);
+                
+                ctx.setLineDash([]); // Reset dash
+            }
+
+            // Draw Current Price Line
+            const currentPrice = currentData[currentData.length - 1].close;
+            const cy = getY(currentPrice);
+            ctx.strokeStyle = '#2962ff';
+            ctx.setLineDash([2, 2]);
+            ctx.beginPath();
+            ctx.moveTo(0, cy);
+            ctx.lineTo(canvas.width - padding.right, cy);
+            ctx.stroke();
+            
+            // Current Price Tag
+            ctx.fillStyle = '#2962ff';
+            ctx.fillRect(canvas.width - padding.right, cy - 10, padding.right, 20);
+            ctx.fillStyle = '#fff';
+            ctx.fillText(currentPrice.toFixed(2), canvas.width - padding.right + 10, cy + 4);
+            ctx.setLineDash([]);
+        }
+
+        // --- 4. Live Data Fetching ---
+        async function fetchRealData() {
+            if (isFetching) return;
+            isFetching = true;
+            
+            if(currentData.length === 0) document.getElementById('loading').style.display = 'block';
+            
+            // Fetch 100 candles (perfect for custom canvas view)
+            const url = `https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=${activeInterval}&outputsize=100&apikey=${API_KEY}`;
+            
+            try {
+                const response = await fetch(url);
+                const json = await response.json();
+                
+                if (json.code === 429) {
+                    document.getElementById('ai-status').innerText = "⚠️ API Rate Limit. Auto-sync will retry shortly.";
+                    document.getElementById('ai-status').style.color = "#ff5252";
+                    return;
+                }
+                if (json.status === 'error') {
+                    document.getElementById('ai-status').innerText = "⚠️ API Error: " + json.message;
+                    return;
+                }
+
+                // Format and reverse data for Left-to-Right drawing
+                currentData = json.values.map(d => ({
+                    time: d.datetime,
+                    open: parseFloat(d.open),
+                    high: parseFloat(d.high),
+                    low: parseFloat(d.low),
+                    close: parseFloat(d.close)
+                })).reverse();
+
+                document.getElementById('last-update').innerText = "Last Sync: " + new Date().toLocaleTimeString();
+                document.getElementById('ai-status').style.color = "#d1d4dc";
+                
+                renderChart();
+
+            } catch (error) {
+                console.error(error);
+                document.getElementById('ai-status').innerText = "⚠️ Network offline. Retrying...";
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+                isFetching = false;
+                resetSyncTimer();
+            }
+        }
+
+        // --- 5. Fully Automatic Synchronization System ---
+        function resetSyncTimer() {
+            clearInterval(autoSyncTimer);
+            clearInterval(countdownTimer);
+            
+            secondsToUpdate = 30; // Update every 30 seconds (safe for 8 req/min limit)
+            document.getElementById('next-update').innerText = `Next update in: ${secondsToUpdate}s`;
+
+            countdownTimer = setInterval(() => {
+                secondsToUpdate--;
+                if (secondsToUpdate <= 0) {
+                    document.getElementById('next-update').innerText = `Syncing...`;
+                } else {
+                    document.getElementById('next-update').innerText = `Next update in: ${secondsToUpdate}s`;
+                }
+            }, 1000);
+
+            autoSyncTimer = setInterval(fetchRealData, 30000);
+        }
+
+        // --- 6. Event Listeners ---
+        document.querySelectorAll('.tf-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                activeInterval = e.target.dataset.interval;
+                currentData = []; // Clear data to show loading screen
+                fetchRealData();
+            });
+        });
+
+        document.getElementById('sr-toggle').addEventListener('change', renderChart);
+
+        // --- 7. Initialization ---
+        document.addEventListener('DOMContentLoaded', () => {
+            resizeCanvas(); // Set initial canvas size
+            fetchRealData(); // Initial load
+        });
+    </script>
+</body>
+</html>
