@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro Interactive Trading Terminal</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        body { background-color: #080a10; color: #d1d4dc; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; margin: 0; padding: 0;}
+        .app-container { height: 100vh; display: flex; flex-direction: column; padding: 10px; gap: 10px;}
+        
+        .header-panel { background-color: #12151f; border: 1px solid #222631; border-radius: 8px; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; z-index: 10;}
+        
+        /* Interactive Canvas Container */
+        #chart-wrapper { flex: 1; position: relative; background: #0d1117; border: 1px solid #222631; border-radius: 8px; overflow: hidden; }
+        /* Grab cursor for panning like TradingView */
+        canvas { display: block; width: 100%; height: 100%; cursor: grab; outline: none; }
+        canvas:active { cursor: grabbing; }
+        
+        /* Overlays */
+        #loading { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(13, 17, 23, 0.9); padding: 15px 25px; border-radius: 8px; z-index: 10; border: 1px solid #00e676; font-weight: bold; color: #fff;}
+        
+        #bot-hud { position: absolute; top: 20px; left: 20px; background: rgba(18, 21, 31, 0.85); border: 1px solid #222631; border-left: 4px solid #0d6efd; padding: 15px; border-radius: 6px; z-index: 5; backdrop-filter: blur(4px); min-width: 280px; pointer-events: none;}
+        
+        .live-badge { background-color: #00e676; color: #000; animation: pulse 2s infinite; font-weight: bold;}
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        
+        .btn-timeframe.active { background-color: #0d6efd; color: white; border-color: #0d6efd; }
+        .form-select-bg { background-color: #1a1e29; color: #fff; border: 1px solid #363c4e; font-weight: bold;}
+
+        .legend { position: absolute; top: 15px; right: 80px; font-family: monospace; font-size: 12px; pointer-events: none;}
+        .legend span { margin-left: 15px; }
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+    <div class="header-panel shadow-sm">
+        <div class="d-flex align-items-center gap-3">
+            <select class="form-select form-select-bg" id="asset-select" style="width: 150px;">
+                <option value="XAU/USD">🥇 XAU/USD</option>
+                <option value="EUR/USD">💶 EUR/USD</option>
+                <option value="GBP/USD">💷 GBP/USD</option>
+                <option value="USD/JPY">💴 USD/JPY</option>
+                <option value="BTC/USD">₿ BTC/USD</option>
+            </select>
+            
+            <span class="badge live-badge fs-6"><i class="fa-solid fa-bolt"></i> CONNECTED</span>
+            <span class="badge bg-primary font-monospace fs-6" id="candle-timer">00:00</span>
+        </div>
+
+        <div class="btn-group" role="group">
+            <button class="btn btn-outline-secondary btn-sm btn-timeframe active" data-interval="5min">5m</button>
+            <button class="btn btn-outline-secondary btn-sm btn-timeframe" data-interval="15min">15m</button>
+            <button class="btn btn-outline-secondary btn-sm btn-timeframe" data-interval="1h">1H</button>
+            <button class="btn btn-outline-secondary btn-sm btn-timeframe" data-interval="4h">4H</button>
+        </div>
+
+        <div class="d-flex align-items-center gap-3">
+            <div class="form-check form-switch m-0">
+                <input class="form-check-input" type="checkbox" id="sr-toggle" checked>
+                <label class="form-check-label small text-secondary" for="sr-toggle">S/R & Whale</label>
+            </div>
+            <div class="text-secondary font-monospace small" id="next-update">Next Poll: 30s</div>
+        </div>
+    </div>
+
+    <div id="chart-wrapper">
+        <div id="loading"><i class="fa-solid fa-circle-notch fa-spin"></i> Downloading Market Data...</div>
+        
+        <div id="bot-hud">
+            <h6 class="text-white mb-2 border-bottom border-secondary pb-2"><i class="fa-solid fa-crosshairs text-primary"></i> Algorithm & Order Flow</h6>
+            <div id="hud-status" class="fs-5 fw-bold text-secondary mb-2">Scanning...</div>
+            <div id="hud-details" class="small text-secondary font-monospace lh-lg">Waiting for volume<br>and trend alignment.</div>
+        </div>
+
+        <div class="legend">
+            <span style="color: #0dcaf0;">EMA 20</span>
+            <span style="color: #fd7e14;">EMA 50</span>
+            <span style="color: #2962ff; background: rgba(41, 98, 255, 0.2); padding: 2px 6px; border-radius: 4px;">WHALE BLOCK</span>
+        </div>
+
+        <canvas id="customChart" tabindex="0"></canvas>
+    </div>
+</div>
+
+<script>
+    // --- 1. Global State & Config ---
+    const API_KEY = "b2c7d75a119049978c58ea7514b72be9";
+    let currentData = [];
+    let activeInterval = '5min';
+    let activeSymbol = 'XAU/USD';
+    let isFetching = false;
+    
+    // Viewport & Panning State
+    let visibleCandles = 120; 
+    const MAX_CANDLES = 500; // Fetch more data for panning
+    const MIN_CANDLES = 30;  
+    let scrollOffset = 0; // 0 means we are at the live edge
+
+    // Mouse Interaction State
+    let isDragging = false;
+    let dragStartX = 0;
+    let dragStartOffset = 0;
+    let mouseX = null;
+    let mouseCanvasY = null;
+
+    // High-Performance Rendering State
+    let needsRender = false;
+    let botCurrentTrade = null;
+
+    // --- 2. Canvas Setup & Render Loop ---
+    const canvas = document.getElementById('customChart');
+    const ctx = canvas.getContext('2d');
+    const wrapper = document.getElementById('chart-wrapper');
+
+    function resizeCanvas() {
+        canvas.width = wrapper.clientWidth;
+        canvas.height = wrapper.clientHeight;
+        queueRender();
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    // RequestAnimationFrame Loop for Zero-Lag Interaction
+    function renderLoop() {
+        if (needsRender) {
+            drawChart();
+            needsRender = false;
+        }
+        requestAnimationFrame(renderLoop);
+    }
+    requestAnimationFrame(renderLoop);
+
+    function queueRender() { needsRender = true; }
+
+    // --- 3. Interactive TradingView Controls (Pan & Zoom) ---
+    canvas.addEventListener('wheel', (e) => {
+        e.preventDefault(); 
+        const zoomFactor = visibleCandles * 0.1;
+        if (e.deltaY > 0) visibleCandles = Math.min(visibleCandles + zoomFactor, currentData.length);
+        else visibleCandles = Math.max(visibleCandles - zoomFactor, MIN_CANDLES);
+        
+        // Ensure we don't scroll past the available data
+        scrollOffset = Math.max(0, Math.min(scrollOffset, currentData.length - visibleCandles));
+        queueRender();
+    });
+
+    canvas.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        dragStartX = e.clientX;
+        dragStartOffset = scrollOffset;
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        mouseX = e.clientX - rect.left;
+        mouseCanvasY = e.clientY - rect.top;
+
+        if (isDragging && currentData.length > 0) {
+            // Calculate how many candles to shift based on pixel movement
+            const drawWidth = canvas.width - 80;
+            const pixelsPerCandle = drawWidth / visibleCandles;
+            const dx = dragStartX - e.clientX;
+            
+            let newOffset = dragStartOffset + (dx / pixelsPerCandle);
+            scrollOffset = Math.max(0, Math.min(newOffset, currentData.length - visibleCandles));
+        }
+        queueRender();
+    });
+
+    canvas.addEventListener('mouseup', () => isDragging = false);
+    canvas.addEventListener('mouseleave', () => { isDragging = false; mouseCanvasY = null; mouseX = null; queueRender(); });
+
+    // --- 4. Technical Analysis Engine ---
+    function calculateEMA(data, period) {
+        let ema = new Array(data.length).fill(null);
+        let multiplier = 2 / (period + 1);
+        
+        if (data.length < period) return ema;
+
+        let sum = 0;
+        for (let i = 0; i < period; i++) sum += data[i].close;
+        ema[period - 1] = sum / period;
+
+        for (let i = period; i < data.length; i++) {
+            ema[i] = (data[i].close - ema[i - 1]) * multiplier + ema[i - 1];
+        }
+        return ema;
+    }
+
+    // --- 5. Bot & Whale Detection Logic ---
+    function analyzeMarket(chartData, ema20, ema50) {
+        botCurrentTrade = null;
+        let whaleBlocks = [];
+        
+        // Calculate Average Volume for Whale Detection
+        let avgVolumeArr = [];
+        let volSum = 0;
+        for(let i=0; i<chartData.length; i++) {
+            volSum += chartData[i].volume;
+            if(i >= 20) volSum -= chartData[i-20].volume;
+            avgVolumeArr.push(i >= 19 ? volSum / 20 : chartData[i].volume);
+        }
+
+        for (let i = 50; i < chartData.length; i++) {
+            const prev = chartData[i - 1];
+            const candle = chartData[i];
+            
+            // WHALE DETECTION (3x Average Volume)
+            if (candle.volume > avgVolumeArr[i] * 3) {
+                whaleBlocks.push({ index: i, high: candle.high, low: candle.low });
+            }
+
+            // AI BOT SIGNAL LOGIC
+            const isUptrend = ema20[i] > ema50[i];
+            const isDowntrend = ema20[i] < ema50[i];
+
+            if (!botCurrentTrade) {
+                if (isUptrend && prev.close < prev.open && candle.close > candle.open && candle.open <= prev.close && candle.close >= prev.open) {
+                    botCurrentTrade = { type: 'BUY', entry: candle.close, sl: candle.low - 0.5, tp: candle.close + ((candle.close - candle.low) * 2), startIndex: i };
+                }
+                else if (isDowntrend && prev.close > prev.open && candle.close < candle.open && candle.open >= prev.close && candle.close <= prev.open) {
+                    botCurrentTrade = { type: 'SELL', entry: candle.close, sl: candle.high + 0.5, tp: candle.close - ((candle.high - candle.close) * 2), startIndex: i };
+                }
+            } else {
+                if (botCurrentTrade.type === 'BUY' && (candle.low <= botCurrentTrade.sl || candle.high >= botCurrentTrade.tp)) botCurrentTrade = null;
+                else if (botCurrentTrade.type === 'SELL' && (candle.high >= botCurrentTrade.sl || candle.low <= botCurrentTrade.tp)) botCurrentTrade = null;
+            }
+        }
+
+        updateHUD();
+        return whaleBlocks;
+    }
+
+    function updateHUD() {
+        const statusEl = document.getElementById('hud-status');
+        const detailsEl = document.getElementById('hud-details');
+        const hudBox = document.getElementById('bot-hud');
+
+        if (botCurrentTrade) {
+            const isBuy = botCurrentTrade.type === 'BUY';
+            hudBox.style.borderLeftColor = isBuy ? '#00e676' : '#ff5252';
+            statusEl.innerHTML = `<span style="color: ${isBuy ? '#00e676' : '#ff5252'};"><i class="fa-solid fa-fire"></i> ${botCurrentTrade.type} EXECUTED</span>`;
+            detailsEl.innerHTML = `Entry: ${botCurrentTrade.entry.toFixed(3)}<br>Target: ${botCurrentTrade.tp.toFixed(3)}<br>Stop: ${botCurrentTrade.sl.toFixed(3)}`;
+        } else {
+            hudBox.style.borderLeftColor = '#6c757d';
+            statusEl.innerHTML = `<span class="text-secondary"><i class="fa-solid fa-radar"></i> Scanning...</span>`;
+            detailsEl.innerHTML = `Waiting for Order Block<br>and momentum alignment.`;
+        }
+    }
+
+    // --- 6. Core Drawing Engine (The Canvas) ---
+    function drawChart() {
+        if (!currentData || currentData.length === 0) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Get the visible window based on pan and zoom
+        const startIndex = Math.floor(currentData.length - visibleCandles - scrollOffset);
+        const endIndex = Math.floor(currentData.length - scrollOffset);
+        const chartData = currentData.slice(Math.max(0, startIndex), endIndex);
+        
+        // Calculate EMAs on FULL data so they don't break on pan
+        const fullEMA20 = calculateEMA(currentData, 20);
+        const fullEMA50 = calculateEMA(currentData, 50);
+        const ema20 = fullEMA20.slice(Math.max(0, startIndex), endIndex);
+        const ema50 = fullEMA50.slice(Math.max(0, startIndex), endIndex);
+
+        const whaleBlocks = analyzeMarket(chartData, ema20, ema50);
+
+        const padding = { top: 30, bottom: 30, left: 0, right: 80 }; 
+        const drawWidth = canvas.width - padding.left - padding.right;
+        const drawHeight = canvas.height - padding.top - padding.bottom;
+        const spacing = (drawWidth / chartData.length);
+        const candleWidth = Math.max(spacing * 0.7, 1);
+
+        // Dynamic Y-Axis Scaling
+        let maxPrice = Math.max(...chartData.map(d => d.high));
+        let minPrice = Math.min(...chartData.map(d => d.low));
+
+        const paddingVal = (maxPrice - minPrice) * 0.1; 
+        maxPrice += paddingVal; minPrice -= paddingVal;
+        const priceRange = maxPrice - minPrice || 1;
+        const getY = (price) => padding.top + drawHeight - ((price - minPrice) / priceRange) * drawHeight;
+        const getX = (index) => padding.left + (index * spacing) + (spacing / 2);
+
+        // Draw Grid & Y-Axis Prices
+        ctx.strokeStyle = 'rgba(42, 46, 57, 0.5)'; ctx.lineWidth = 1; ctx.fillStyle = '#787b86'; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
+        for (let i = 0; i <= 8; i++) {
+            const y = padding.top + (drawHeight / 8) * i;
+            const priceLevel = maxPrice - (priceRange / 8) * i;
+            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width - padding.right, y); ctx.stroke();
+            ctx.fillText(priceLevel.toFixed(3), canvas.width - padding.right + 10, y + 4);
+        }
+
+        // Draw Whale Blocks (Order Blocks)
+        if (document.getElementById('sr-toggle').checked) {
+            whaleBlocks.forEach(wb => {
+                const x = getX(wb.index);
+                ctx.fillStyle = 'rgba(41, 98, 255, 0.15)'; // Blue tint for whales
+                ctx.fillRect(x - (spacing*2), getY(wb.high), canvas.width, Math.abs(getY(wb.low) - getY(wb.high)));
+                
+                ctx.strokeStyle = 'rgba(41, 98, 255, 0.8)';
+                ctx.setLineDash([2, 2]);
+                ctx.beginPath(); ctx.moveTo(x, getY(wb.high)); ctx.lineTo(canvas.width - padding.right, getY(wb.high)); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(x, getY(wb.low)); ctx.lineTo(canvas.width - padding.right, getY(wb.low)); ctx.stroke();
+                ctx.setLineDash([]);
+            });
+
+            // Draw Fractal Support/Resistance
+            const vHigh = Math.max(...chartData.map(d => d.high));
+            const vLow = Math.min(...chartData.map(d => d.low));
+            ctx.setLineDash([5, 5]); ctx.lineWidth = 2;
+            ctx.strokeStyle = 'rgba(255, 82, 82, 0.6)'; ctx.beginPath(); ctx.moveTo(0, getY(vHigh)); ctx.lineTo(canvas.width - padding.right, getY(vHigh)); ctx.stroke();
+            ctx.strokeStyle = 'rgba(0, 230, 118, 0.6)'; ctx.beginPath(); ctx.moveTo(0, getY(vLow)); ctx.lineTo(canvas.width - padding.right, getY(vLow)); ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        // Draw EMAs
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#0dcaf0'; // EMA 20
+        ctx.beginPath();
+        ema20.forEach((val, i) => { if(val) i === 0 ? ctx.moveTo(getX(i), getY(val)) : ctx.lineTo(getX(i), getY(val)); });
+        ctx.stroke();
+
+        ctx.strokeStyle = '#fd7e14'; // EMA 50
+        ctx.beginPath();
+        ema50.forEach((val, i) => { if(val) i === 0 ? ctx.moveTo(getX(i), getY(val)) : ctx.lineTo(getX(i), getY(val)); });
+        ctx.stroke();
+
+        // Draw Candlesticks
+        chartData.forEach((candle, index) => {
+            const x = getX(index);
+            const isBullish = candle.close >= candle.open;
+            
+            ctx.strokeStyle = isBullish ? '#00e676' : '#ff5252'; 
+            ctx.fillStyle = isBullish ? '#00e676' : '#ff5252';
+            
+            ctx.beginPath(); ctx.moveTo(x, getY(candle.high)); ctx.lineTo(x, getY(candle.low)); ctx.lineWidth = 1.5; ctx.stroke();
+            const bodyHeight = Math.max(Math.abs(getY(candle.close) - getY(candle.open)), 1); 
+            ctx.fillRect(x - candleWidth/2, Math.min(getY(candle.open), getY(candle.close)), candleWidth, bodyHeight);
+        });
+
+        // Interactive Crosshair
+        if (mouseCanvasY !== null && mouseCanvasY > padding.top && mouseCanvasY < canvas.height - padding.bottom && mouseX < canvas.width - padding.right) {
+            ctx.setLineDash([4, 4]); ctx.lineWidth = 1; ctx.strokeStyle = '#6c757d';
+            
+            // Horizontal Line
+            ctx.beginPath(); ctx.moveTo(0, mouseCanvasY); ctx.lineTo(canvas.width - padding.right, mouseCanvasY); ctx.stroke();
+            // Vertical Line
+            ctx.beginPath(); ctx.moveTo(mouseX, padding.top); ctx.lineTo(mouseX, canvas.height - padding.bottom); ctx.stroke();
+            
+            // Price Tag
+            const hoverPrice = minPrice + ((padding.top + drawHeight - mouseCanvasY) / drawHeight) * priceRange;
+            ctx.fillStyle = '#6c757d'; ctx.fillRect(canvas.width - padding.right, mouseCanvasY - 10, padding.right, 20);
+            ctx.fillStyle = '#fff'; ctx.font = '11px sans-serif'; ctx.fillText(hoverPrice.toFixed(3), canvas.width - padding.right + 5, mouseCanvasY + 4);
+        }
+
+        // Live Edge Price Tag
+        if (scrollOffset === 0) {
+            const currentPrice = chartData[chartData.length - 1].close;
+            const cy = getY(currentPrice);
+            ctx.strokeStyle = '#0d6efd'; ctx.setLineDash([]); ctx.lineWidth = 2; 
+            ctx.beginPath(); ctx.moveTo(canvas.width - padding.right - 10, cy); ctx.lineTo(canvas.width - padding.right, cy); ctx.stroke();
+            
+            ctx.fillStyle = '#0d6efd'; ctx.fillRect(canvas.width - padding.right, cy - 12, padding.right, 24);
+            ctx.fillStyle = '#fff'; ctx.font = 'bold 12px sans-serif'; ctx.fillText(currentPrice.toFixed(3), canvas.width - padding.right + 8, cy + 4); 
+        }
+    }
+
+    // --- 7. Networking & Data Sync ---
+    let autoSyncTimer, countdownTimer, candleCloseInterval;
+    let secondsToUpdate = 30;
+
+    async function fetchRealData() {
+        if (isFetching) return;
+        isFetching = true;
+        if(currentData.length === 0) document.getElementById('loading').style.display = 'block';
+        
+        const url = `https://api.twelvedata.com/time_series?symbol=${activeSymbol}&interval=${activeInterval}&outputsize=${MAX_CANDLES}&apikey=${API_KEY}`;
+        
+        try {
+            const response = await fetch(url);
+            const json = await response.json();
+            
+            if (json.code === 429 || json.status === 'error') return;
+
+            // Parse OHLCV (Volume added for Whale tracking)
+            currentData = json.values.map(d => ({
+                time: d.datetime, open: parseFloat(d.open), high: parseFloat(d.high), low: parseFloat(d.low), close: parseFloat(d.close), volume: parseFloat(d.volume) || 0
+            })).reverse();
+            
+            queueRender();
+        } catch (error) {
+            console.error(error);
+        } finally {
+            document.getElementById('loading').style.display = 'none';
+            isFetching = false;
+            resetSyncTimer();
+        }
+    }
+
+    function resetSyncTimer() {
+        clearInterval(autoSyncTimer); clearInterval(countdownTimer);
+        secondsToUpdate = 30; 
+        countdownTimer = setInterval(() => {
+            secondsToUpdate--;
+            document.getElementById('next-update').innerHTML = secondsToUpdate <= 0 ? `Syncing...` : `Next Poll: ${secondsToUpdate}s`;
+        }, 1000);
+        autoSyncTimer = setInterval(fetchRealData, 30000);
+    }
+
+    function startCandleTimer() {
+        clearInterval(candleCloseInterval);
+        candleCloseInterval = setInterval(() => {
+            const currentMs = new Date().getTime();
+            let msPerCandle = 5 * 60 * 1000; 
+            if (activeInterval === '15min') msPerCandle = 15 * 60 * 1000;
+            else if (activeInterval === '1h') msPerCandle = 60 * 60 * 1000;
+            else if (activeInterval === '4h') msPerCandle = 4 * 60 * 60 * 1000;
+
+            const remainingMs = msPerCandle - (currentMs % msPerCandle);
+            const m = Math.floor((remainingMs / 1000 / 60) % 60).toString().padStart(2, '0');
+            const s = Math.floor((remainingMs / 1000) % 60).toString().padStart(2, '0');
+            document.getElementById('candle-timer').innerText = `${m}:${s}`;
+        }, 1000);
+    }
+
+    // --- 8. Init ---
+    document.querySelectorAll('.btn-timeframe').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            document.querySelectorAll('.btn-timeframe').forEach(b => b.classList.remove('active'));
+            e.target.classList.add('active');
+            activeInterval = e.target.dataset.interval;
+            currentData = []; scrollOffset = 0; startCandleTimer(); fetchRealData();
+        });
+    });
+
+    document.getElementById('asset-select').addEventListener('change', (e) => {
+        activeSymbol = e.target.value;
+        currentData = []; scrollOffset = 0; fetchRealData();
+    });
+
+    document.getElementById('sr-toggle').addEventListener('change', queueRender);
+
+    document.addEventListener('DOMContentLoaded', () => {
+        resizeCanvas(); startCandleTimer(); fetchRealData(); 
+    });
+</script>
+</body>
+</html>
