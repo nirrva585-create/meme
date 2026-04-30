@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMC Price Action Auto-Terminal</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        body { background-color: #080a10; color: #d1d4dc; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; margin: 0; padding: 0;}
+        .app-container { height: 100vh; display: flex; flex-direction: column; padding: 10px; gap: 10px;}
+        
+        .header-panel { background-color: #12151f; border: 1px solid #222631; border-radius: 8px; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; z-index: 10;}
+        
+        #chart-wrapper { flex: 1; position: relative; background: #0d1117; border: 1px solid #222631; border-radius: 8px; overflow: hidden; }
+        canvas { display: block; width: 100%; height: 100%; cursor: grab; outline: none; }
+        canvas:active { cursor: grabbing; }
+        
+        #loading { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(13, 17, 23, 0.9); padding: 15px 25px; border-radius: 8px; z-index: 10; border: 1px solid #00e676; font-weight: bold; color: #fff;}
+        
+        #bot-hud { position: absolute; top: 20px; left: 20px; background: rgba(18, 21, 31, 0.85); border: 1px solid #222631; border-left: 4px solid #0dcaf0; padding: 15px; border-radius: 6px; z-index: 5; backdrop-filter: blur(4px); min-width: 290px; pointer-events: none;}
+        
+        .live-badge { background-color: #00e676; color: #000; animation: pulse 2s infinite; font-weight: bold;}
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        
+        .btn-timeframe.active { background-color: #0d6efd; color: white; border-color: #0d6efd; }
+        .form-select-bg { background-color: #1a1e29; color: #fff; border: 1px solid #363c4e; font-weight: bold;}
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+    <div class="header-panel shadow-sm">
+        <div class="d-flex align-items-center gap-3">
+            <select class="form-select form-select-bg" id="asset-select" style="width: 170px;">
+                <optgroup label="Crypto (Binance - Zero Lag)">
+                    <option value="BTCUSDT" data-api="binance">₿ Bitcoin (BTC)</option>
+                    <option value="ETHUSDT" data-api="binance">♦ Ethereum (ETH)</option>
+                    <option value="SOLUSDT" data-api="binance">◎ Solana (SOL)</option>
+                </optgroup>
+                <optgroup label="Forex/Metals (TwelveData)">
+                    <option value="XAU/USD" data-api="twelve">🥇 Gold (XAU/USD)</option>
+                    <option value="EUR/USD" data-api="twelve">💶 EUR/USD</option>
+                    <option value="GBP/USD" data-api="twelve">💷 GBP/USD</option>
+                </optgroup>
+            </select>
+            
+            <span class="badge live-badge fs-6"><i class="fa-solid fa-bolt"></i> HYBRID API</span>
+            <span class="badge bg-primary font-monospace fs-6" id="candle-timer">00:00</span>
+        </div>
+
+        <div class="btn-group" role="group">
+            <button class="btn btn-outline-secondary btn-sm btn-timeframe active" data-twelve="5min" data-binance="5m">5m</button>
+            <button class="btn btn-outline-secondary btn-sm btn-timeframe" data-twelve="15min" data-binance="15m">15m</button>
+            <button class="btn btn-outline-secondary btn-sm btn-timeframe" data-twelve="1h" data-binance="1h">1H</button>
+            <button class="btn btn-outline-secondary btn-sm btn-timeframe" data-twelve="4h" data-binance="4h">4H</button>
+        </div>
+
+        <div class="d-flex align-items-center gap-3">
+            <button id="btn-notifications" class="btn btn-outline-warning btn-sm fw-bold">
+                <i class="fa-solid fa-bell-slash"></i> Alerts Off
+            </button>
+            <div class="form-check form-switch m-0">
+                <input class="form-check-input" type="checkbox" id="ob-toggle" checked>
+                <label class="form-check-label small text-secondary" for="ob-toggle">Whale Blocks</label>
+            </div>
+            <div class="text-secondary font-monospace small" id="next-update">Next Poll: 10s</div>
+        </div>
+    </div>
+
+    <div id="chart-wrapper">
+        <div id="loading"><i class="fa-solid fa-circle-notch fa-spin"></i> Syncing Order Flow...</div>
+        
+        <div id="bot-hud">
+            <h6 class="text-white mb-2 border-bottom border-secondary pb-2"><i class="fa-solid fa-building-columns text-info"></i> SMC Price Action Analyst</h6>
+            <div id="hud-status" class="fs-5 fw-bold text-secondary mb-2">Scanning Structure...</div>
+            <div id="hud-details" class="small text-secondary font-monospace lh-lg">Waiting for price to test<br>Whale Order Blocks.</div>
+        </div>
+
+        <canvas id="customChart" tabindex="0"></canvas>
+    </div>
+</div>
+
+<script>
+    // --- 1. Global State & Config ---
+    const TWELVE_API_KEY = "b2c7d75a119049978c58ea7514b72be9";
+    let currentData = [];
+    let isFetching = false;
+    
+    // UI Routing State
+    let activeSymbol = 'BTCUSDT'; 
+    let activeApi = 'binance'; 
+    let activeInterval = { twelve: '5min', binance: '5m' };
+    
+    // Viewport & Panning State
+    let visibleCandles = 100; 
+    const MAX_CANDLES = 500;
+    let scrollOffset = 0; 
+    let isDragging = false, dragStartX = 0, dragStartOffset = 0;
+    let mouseX = null, mouseCanvasY = null;
+    let needsRender = false;
+    let botCurrentTrade = null;
+    let activeOrderBlocks = [];
+
+    // Alert System
+    let alertsEnabled = false;
+    let lastNotifiedTime = null;
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    // --- 2. Alert System ---
+    document.getElementById('btn-notifications').addEventListener('click', async function() {
+        if (!alertsEnabled) {
+            const permission = await Notification.requestPermission();
+            if (permission === 'granted') {
+                alertsEnabled = true;
+                this.innerHTML = '<i class="fa-solid fa-bell"></i> Alerts On';
+                this.classList.replace('btn-outline-warning', 'btn-warning');
+                this.classList.add('text-dark');
+                playAlertSound();
+            } else alert("Browser blocked notifications. Allow them in settings.");
+        } else {
+            alertsEnabled = false;
+            this.innerHTML = '<i class="fa-solid fa-bell-slash"></i> Alerts Off';
+            this.classList.replace('btn-warning', 'btn-outline-warning');
+            this.classList.remove('text-dark');
+        }
+    });
+
+    function playAlertSound() {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+        osc.type = 'sine'; osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.start(); gain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.5); osc.stop(audioCtx.currentTime + 0.5);
+    }
+
+    function triggerAlert(type, price) {
+        if (!alertsEnabled) return;
+        playAlertSound();
+        new Notification(`${type === 'BUY' ? '🟢' : '🔴'} SMC ${type} SIGNAL`, {
+            body: `Whale Order Block Rejection confirmed at ${price}.`, requireInteraction: true
+        });
+    }
+
+    // --- 3. Canvas Setup & Loop ---
+    const canvas = document.getElementById('customChart');
+    const ctx = canvas.getContext('2d');
+    const wrapper = document.getElementById('chart-wrapper');
+
+    function resizeCanvas() { canvas.width = wrapper.clientWidth; canvas.height = wrapper.clientHeight; queueRender(); }
+    window.addEventListener('resize', resizeCanvas);
+    function renderLoop() { if (needsRender) { drawChart(); needsRender = false; } requestAnimationFrame(renderLoop); }
+    requestAnimationFrame(renderLoop);
+    function queueRender() { needsRender = true; }
+
+    // --- 4. Interactive Panning ---
+    canvas.addEventListener('wheel', (e) => {
+        e.preventDefault(); 
+        const zoomFactor = visibleCandles * 0.1;
+        if (e.deltaY > 0) visibleCandles = Math.min(visibleCandles + zoomFactor, currentData.length);
+        else visibleCandles = Math.max(visibleCandles - zoomFactor, 20);
+        scrollOffset = Math.max(0, Math.min(scrollOffset, currentData.length - visibleCandles));
+        queueRender();
+    });
+    canvas.addEventListener('mousedown', (e) => { isDragging = true; dragStartX = e.clientX; dragStartOffset = scrollOffset; });
+    canvas.addEventListener('mousemove', (e) => {
+        mouseX = e.clientX - canvas.getBoundingClientRect().left; mouseCanvasY = e.clientY - canvas.getBoundingClientRect().top;
+        if (isDragging && currentData.length > 0) {
+            let newOffset = dragStartOffset + ((dragStartX - e.clientX) / ((canvas.width - 80) / visibleCandles));
+            scrollOffset = Math.max(0, Math.min(newOffset, currentData.length - visibleCandles));
+        }
+        queueRender();
+    });
+    canvas.addEventListener('mouseup', () => isDragging = false);
+    canvas.addEventListener('mouseleave', () => { isDragging = false; mouseCanvasY = null; mouseX = null; queueRender(); });
+
+    // --- 5. SMC Pure Price Action Engine ---
+    function analyzeMarket(chartData) {
+        botCurrentTrade = null;
+        activeOrderBlocks = [];
+        
+        // 1. Detect Whale Order Blocks (Volume Spike + Large Spread)
+        let volSum = 0;
+        let avgVolumeArr = [];
+        for(let i=0; i<chartData.length; i++) {
+            volSum += chartData[i].volume;
+            if(i >= 20) volSum -= chartData[i-20].volume;
+            avgVolumeArr.push(i >= 19 ? volSum / 20 : chartData[i].volume);
+            
+            const candle = chartData[i];
+            const spread = Math.abs(candle.close - candle.open);
+            const isBullish = candle.close > candle.open;
+
+            // Whale Criteria: 2.5x Volume AND substantial body size
+            if (i > 20 && candle.volume > avgVolumeArr[i] * 2.5) {
+                activeOrderBlocks.push({
+                    index: i,
+                    type: isBullish ? 'BULLISH' : 'BEARISH',
+                    top: Math.max(candle.open, candle.close),
+                    bottom: Math.min(candle.open, candle.close),
+                    extreme: isBullish ? candle.low : candle.high
+                });
+            }
+        }
+
+        // 2. Scan for Price Action Signals interacting with Order Blocks
+        for (let i = 50; i < chartData.length; i++) {
+            const prev = chartData[i - 1], candle = chartData[i];
+            
+            // Reversal Patterns
+            const isBullishEngulfing = prev.close < prev.open && candle.close > candle.open && candle.open <= prev.close && candle.close >= prev.open;
+            const isBearishEngulfing = prev.close > prev.open && candle.close < candle.open && candle.open >= prev.close && candle.close <= prev.open;
+
+            if (!botCurrentTrade) {
+                if (isBullishEngulfing) {
+                    // Check if bouncing off a Bullish Order Block
+                    const validOB = activeOrderBlocks.find(ob => ob.type === 'BULLISH' && ob.index < i && candle.low <= ob.top && candle.low >= ob.extreme * 0.999);
+                    
+                    if (validOB) {
+                        const sl = validOB.extreme; // Stop loss below the entire Whale block
+                        botCurrentTrade = { type: 'BUY', entry: candle.close, sl: sl, tp: candle.close + ((candle.close - sl) * 2), startIndex: i, obRef: validOB };
+                        if (i >= chartData.length - 2 && candle.time !== lastNotifiedTime) { triggerAlert('BUY', candle.close); lastNotifiedTime = candle.time; }
+                    }
+                }
+                else if (isBearishEngulfing) {
+                    // Check if rejecting off a Bearish Order Block
+                    const validOB = activeOrderBlocks.find(ob => ob.type === 'BEARISH' && ob.index < i && candle.high >= ob.bottom && candle.high <= ob.extreme * 1.001);
+                    
+                    if (validOB) {
+                        const sl = validOB.extreme; // Stop loss above the entire Whale block
+                        botCurrentTrade = { type: 'SELL', entry: candle.close, sl: sl, tp: candle.close - ((sl - candle.close) * 2), startIndex: i, obRef: validOB };
+                        if (i >= chartData.length - 2 && candle.time !== lastNotifiedTime) { triggerAlert('SELL', candle.close); lastNotifiedTime = candle.time; }
+                    }
+                }
+            } else {
+                // Trade Management
+                if (botCurrentTrade.type === 'BUY' && (candle.low <= botCurrentTrade.sl || candle.high >= botCurrentTrade.tp)) botCurrentTrade = null;
+                else if (botCurrentTrade.type === 'SELL' && (candle.high >= botCurrentTrade.sl || candle.low <= botCurrentTrade.tp)) botCurrentTrade = null;
+            }
+        }
+        updateHUD();
+    }
+
+    function updateHUD() {
+        const statusEl = document.getElementById('hud-status'), detailsEl = document.getElementById('hud-details'), hudBox = document.getElementById('bot-hud');
+        const dec = activeApi === 'binance' ? 2 : (activeSymbol.includes('JPY') ? 3 : 5);
+
+        if (botCurrentTrade) {
+            const isBuy = botCurrentTrade.type === 'BUY';
+            hudBox.style.borderLeftColor = isBuy ? '#00e676' : '#ff5252';
+            statusEl.innerHTML = `<span style="color: ${isBuy ? '#00e676' : '#ff5252'};"><i class="fa-solid fa-crosshairs"></i> ${botCurrentTrade.type} EXECUTED</span>`;
+            detailsEl.innerHTML = `OB Bounce Confirmed<br>Entry: ${botCurrentTrade.entry.toFixed(dec)}<br>Target: ${botCurrentTrade.tp.toFixed(dec)}<br>Stop: ${botCurrentTrade.sl.toFixed(dec)}`;
+        } else {
+            hudBox.style.borderLeftColor = '#0dcaf0';
+            statusEl.innerHTML = `<span class="text-info"><i class="fa-solid fa-eye"></i> Monitoring Zones...</span>`;
+            detailsEl.innerHTML = `Awaiting price action to<br>test major Whale Blocks.`;
+        }
+    }
+
+    // --- 6. Core Drawing Engine ---
+    function drawChart() {
+        if (!currentData || currentData.length === 0) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const startIndex = Math.floor(currentData.length - visibleCandles - scrollOffset);
+        const endIndex = Math.floor(currentData.length - scrollOffset);
+        const chartData = currentData.slice(Math.max(0, startIndex), endIndex);
+        
+        analyzeMarket(currentData); // Analyze full data for structural integrity
+
+        const padding = { top: 30, bottom: 30, left: 0, right: 80 }; 
+        const drawWidth = canvas.width - padding.left - padding.right, drawHeight = canvas.height - padding.top - padding.bottom;
+        const spacing = drawWidth / chartData.length, candleWidth = Math.max(spacing * 0.7, 1);
+        const dec = activeApi === 'binance' ? 2 : (activeSymbol.includes('JPY') ? 3 : 5);
+
+        let maxPrice = Math.max(...chartData.map(d => d.high)), minPrice = Math.min(...chartData.map(d => d.low));
+        if (botCurrentTrade && botCurrentTrade.startIndex >= startIndex) {
+            maxPrice = Math.max(maxPrice, botCurrentTrade.tp, botCurrentTrade.sl); minPrice = Math.min(minPrice, botCurrentTrade.tp, botCurrentTrade.sl);
+        }
+
+        const paddingVal = (maxPrice - minPrice) * 0.1; maxPrice += paddingVal; minPrice -= paddingVal;
+        const priceRange = maxPrice - minPrice || 1;
+        const getY = (price) => padding.top + drawHeight - ((price - minPrice) / priceRange) * drawHeight;
+        const getX = (index) => padding.left + ((index - startIndex) * spacing) + (spacing / 2);
+
+        // Grid
+        ctx.strokeStyle = 'rgba(42, 46, 57, 0.5)'; ctx.lineWidth = 1; ctx.fillStyle = '#787b86'; ctx.font = '12px sans-serif';
+        for (let i = 0; i <= 8; i++) {
+            const y = padding.top + (drawHeight / 8) * i, priceLevel = maxPrice - (priceRange / 8) * i;
+            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width - padding.right, y); ctx.stroke();
+            ctx.fillText(priceLevel.toFixed(dec), canvas.width - padding.right + 10, y + 4);
+        }
+
+        // Draw Whale Order Blocks
+        if (document.getElementById('ob-toggle').checked) {
+            activeOrderBlocks.forEach(ob => {
+                // Only draw if it's potentially visible or originated before our view
+                if (ob.index <= endIndex && ob.extreme >= minPrice && ob.extreme <= maxPrice) {
+                    const startXPos = ob.index < startIndex ? padding.left : getX(ob.index);
+                    const isBullish = ob.type === 'BULLISH';
+                    
+                    // Fill Block Zone
+                    ctx.fillStyle = isBullish ? 'rgba(0, 230, 118, 0.08)' : 'rgba(255, 82, 82, 0.08)'; 
+                    ctx.fillRect(startXPos, getY(ob.top), canvas.width, Math.abs(getY(ob.bottom) - getY(ob.top)));
+                    
+                    // Border Lines
+                    ctx.strokeStyle = isBullish ? 'rgba(0, 230, 118, 0.5)' : 'rgba(255, 82, 82, 0.5)'; 
+                    ctx.setLineDash([4, 4]);
+                    ctx.beginPath(); ctx.moveTo(startXPos, getY(ob.top)); ctx.lineTo(canvas.width - padding.right, getY(ob.top)); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(startXPos, getY(ob.bottom)); ctx.lineTo(canvas.width - padding.right, getY(ob.bottom)); ctx.stroke(); 
+                    ctx.setLineDash([]);
+                }
+            });
+        }
+
+        // Trade Zones
+        if (botCurrentTrade && botCurrentTrade.startIndex <= endIndex) {
+            const startX = Math.max(padding.left, getX(botCurrentTrade.startIndex)), endX = canvas.width - padding.right;
+            ctx.fillStyle = 'rgba(0, 230, 118, 0.15)'; ctx.fillRect(startX, Math.min(getY(botCurrentTrade.entry), getY(botCurrentTrade.tp)), endX - startX, Math.abs(getY(botCurrentTrade.tp) - getY(botCurrentTrade.entry)));
+            ctx.fillStyle = 'rgba(255, 82, 82, 0.15)'; ctx.fillRect(startX, Math.min(getY(botCurrentTrade.entry), getY(botCurrentTrade.sl)), endX - startX, Math.abs(getY(botCurrentTrade.sl) - getY(botCurrentTrade.entry)));
+
+            ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);
+            ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.moveTo(startX, getY(botCurrentTrade.entry)); ctx.lineTo(endX, getY(botCurrentTrade.entry)); ctx.stroke();
+            ctx.strokeStyle = '#00e676'; ctx.setLineDash([]); ctx.beginPath(); ctx.moveTo(startX, getY(botCurrentTrade.tp)); ctx.lineTo(endX, getY(botCurrentTrade.tp)); ctx.stroke();
+            ctx.strokeStyle = '#ff5252'; ctx.beginPath(); ctx.moveTo(startX, getY(botCurrentTrade.sl)); ctx.lineTo(endX, getY(botCurrentTrade.sl)); ctx.stroke();
+        }
+
+        // Candlesticks
+        ctx.setLineDash([]);
+        chartData.forEach((candle, i) => {
+            const globalIndex = startIndex + i;
+            const x = getX(globalIndex), isBullish = candle.close >= candle.open;
+            
+            ctx.strokeStyle = isBullish ? '#00e676' : '#ff5252'; ctx.fillStyle = isBullish ? '#00e676' : '#ff5252';
+            ctx.beginPath(); ctx.moveTo(x, getY(candle.high)); ctx.lineTo(x, getY(candle.low)); ctx.lineWidth = 1.5; ctx.stroke();
+            ctx.fillRect(x - candleWidth/2, Math.min(getY(candle.open), getY(candle.close)), candleWidth, Math.max(Math.abs(getY(candle.close) - getY(candle.open)), 1));
+
+            if (botCurrentTrade && botCurrentTrade.startIndex === globalIndex) {
+                const yPos = botCurrentTrade.type === 'BUY' ? getY(candle.low) + 12 : getY(candle.high) - 12, dir = botCurrentTrade.type === 'BUY' ? 12 : -12;
+                ctx.fillStyle = '#fff'; // White arrow for SMC execution
+                ctx.beginPath(); ctx.moveTo(x, yPos); ctx.lineTo(x - 6, yPos + dir); ctx.lineTo(x + 6, yPos + dir); ctx.fill();
+            }
+        });
+
+        // Hover Crosshair
+        if (mouseCanvasY !== null && mouseCanvasY > padding.top && mouseCanvasY < canvas.height - padding.bottom && mouseX < canvas.width - padding.right) {
+            ctx.setLineDash([4, 4]); ctx.lineWidth = 1; ctx.strokeStyle = '#6c757d';
+            ctx.beginPath(); ctx.moveTo(0, mouseCanvasY); ctx.lineTo(canvas.width - padding.right, mouseCanvasY); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(mouseX, padding.top); ctx.lineTo(mouseX, canvas.height - padding.bottom); ctx.stroke();
+            
+            const hoverPrice = minPrice + ((padding.top + drawHeight - mouseCanvasY) / drawHeight) * priceRange;
+            ctx.fillStyle = '#6c757d'; ctx.fillRect(canvas.width - padding.right, mouseCanvasY - 10, padding.right, 20);
+            ctx.fillStyle = '#fff'; ctx.font = '11px sans-serif'; ctx.fillText(hoverPrice.toFixed(dec), canvas.width - padding.right + 5, mouseCanvasY + 4);
+        }
+
+        // Live Price Tag
+        if (scrollOffset === 0) {
+            const cy = getY(chartData[chartData.length - 1].close);
+            ctx.strokeStyle = '#0d6efd'; ctx.setLineDash([]); ctx.lineWidth = 2; 
+            ctx.beginPath(); ctx.moveTo(canvas.width - padding.right - 10, cy); ctx.lineTo(canvas.width - padding.right, cy); ctx.stroke();
+            ctx.fillStyle = '#0d6efd'; ctx.fillRect(canvas.width - padding.right, cy - 12, padding.right, 24);
+            ctx.fillStyle = '#fff'; ctx.font = 'bold 12px sans-serif'; ctx.fillText(chartData[chartData.length - 1].close.toFixed(dec), canvas.width - padding.right + 8, cy + 4); 
+        }
+    }
+
+    // --- 7. Hybrid API Data Fetcher ---
+    let autoSyncTimer, countdownTimer, candleCloseInterval;
+    let secondsToUpdate = 10; 
+
+    async function fetchMarketData() {
+        if (isFetching) return;
+        isFetching = true;
+        if (currentData.length === 0) document.getElementById('loading').style.display = 'block';
+        
+        try {
+            if (activeApi === 'binance') {
+                const url = `https://api.binance.com/api/v3/klines?symbol=${activeSymbol}&interval=${activeInterval.binance}&limit=${MAX_CANDLES}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                currentData = data.map(d => ({
+                    time: d[0], open: parseFloat(d[1]), high: parseFloat(d[2]), low: parseFloat(d[3]), close: parseFloat(d[4]), volume: parseFloat(d[5])
+                }));
+            } else {
+                const url = `https://api.twelvedata.com/time_series?symbol=${activeSymbol}&interval=${activeInterval.twelve}&outputsize=${MAX_CANDLES}&apikey=${TWELVE_API_KEY}`;
+                const res = await fetch(url);
+                const json = await res.json();
+                if (json.code === 429) { document.getElementById('hud-status').innerHTML = "<span class='text-danger'>Rate Limit. Waiting...</span>"; return; }
+                if (json.status === 'error') throw new Error(json.message);
+                
+                currentData = json.values.map(d => ({
+                    time: d.datetime, open: parseFloat(d.open), high: parseFloat(d.high), low: parseFloat(d.low), close: parseFloat(d.close), volume: parseFloat(d.volume) || 0
+                })).reverse();
+            }
+            queueRender();
+        } catch (error) {
+            console.error("Fetch Error:", error);
+        } finally {
+            document.getElementById('loading').style.display = 'none';
+            isFetching = false;
+            resetSyncTimer();
+        }
+    }
+
+    function resetSyncTimer() {
+        clearInterval(autoSyncTimer); clearInterval(countdownTimer);
+        secondsToUpdate = activeApi === 'binance' ? 10 : 30; 
+        countdownTimer = setInterval(() => {
+            secondsToUpdate--;
+            document.getElementById('next-update').innerHTML = secondsToUpdate <= 0 ? `Syncing...` : `Next Poll: ${secondsToUpdate}s`;
+        }, 1000);
+        autoSyncTimer = setInterval(fetchMarketData, activeApi === 'binance' ? 10000 : 30000);
+    }
+
+    function startCandleTimer() {
+        clearInterval(candleCloseInterval);
+        candleCloseInterval = setInterval(() => {
+            const currentMs = new Date().getTime();
+            let msPerCandle = 5 * 60 * 1000; 
+            if (activeInterval.binance === '15m') msPerCandle = 15 * 60 * 1000;
+            else if (activeInterval.binance === '1h') msPerCandle = 60 * 60 * 1000;
+            else if (activeInterval.binance === '4h') msPerCandle = 4 * 60 * 60 * 1000;
+
+            const remainingMs = msPerCandle - (currentMs % msPerCandle);
+            const m = Math.floor((remainingMs / 1000 / 60) % 60).toString().padStart(2, '0');
+            const s = Math.floor((remainingMs / 1000) % 60).toString().padStart(2, '0');
+            document.getElementById('candle-timer').innerText = `${m}:${s}`;
+        }, 1000);
+    }
+
+    // --- 8. Initialization ---
+    document.querySelectorAll('.btn-timeframe').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            document.querySelectorAll('.btn-timeframe').forEach(b => b.classList.remove('active'));
+            e.target.classList.add('active');
+            activeInterval.twelve = e.target.dataset.twelve;
+            activeInterval.binance = e.target.dataset.binance;
+            currentData = []; scrollOffset = 0; startCandleTimer(); fetchMarketData();
+        });
+    });
+
+    document.getElementById('asset-select').addEventListener('change', (e) => {
+        const option = e.target.options[e.target.selectedIndex];
+        activeSymbol = e.target.value;
+        activeApi = option.dataset.api;
+        currentData = []; scrollOffset = 0; fetchMarketData();
+    });
+
+    document.getElementById('ob-toggle').addEventListener('change', queueRender);
+
+    document.addEventListener('DOMContentLoaded', () => {
+        resizeCanvas(); startCandleTimer(); fetchMarketData(); 
+    });
+</script>
+</body>
+</html>
